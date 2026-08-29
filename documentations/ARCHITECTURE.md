@@ -1,5 +1,7 @@
 # Shopping Copilot Architecture
 
+Startup builds the read-only retrieval layer from the 50,000-row catalog: normalized field text, fielded BM25 indexes, structured attribute maps, vocabulary/aliases, quality features, and the valid parent_asin set. Each respond() call parses the turn into typed ops (add, negate, replace, no_preference), updates bounded per-session state, and an intent router picks the track — Buying (hard-constraint precision), Browsing (recall + clarification), Override (erase superseded state), or Boundary (record no-preference). Three routes (current-turn fielded BM25, resolved-state fielded BM25, structured category/attribute filter) fill a candidate union, Reciprocal Rank Fusion merges ranks, and a reranker enforces hard-constraint eligibility then scores relevance + soft preference + weak profile + quality with a stable parent_asin tie-break. A clarification policy emits the highest expected-information-gain ask_attribute, the composer validates contract/IDs and returns message + ranked recommendations + usage (deterministic fallback on failure), while dense recall and LLM rerank stay gated behind offline held-out evaluation.
+
 ```mermaid
 flowchart TB
     %% ===== Core pipeline =====
