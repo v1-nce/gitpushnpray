@@ -1,6 +1,34 @@
 # Shopping Copilot Architecture
 
-Startup builds the read-only retrieval layer from the 50,000-row catalog: normalized field text, fielded BM25 indexes, structured attribute maps, vocabulary/aliases, quality features, and the valid parent_asin set. Each respond() call parses the turn into typed ops (add, negate, replace, no_preference), updates bounded per-session state, and an intent router picks the track — Buying (hard-constraint precision), Browsing (recall + clarification), Override (erase superseded state), or Boundary (record no-preference). Three routes (current-turn fielded BM25, resolved-state fielded BM25, structured category/attribute filter) fill a candidate union, Reciprocal Rank Fusion merges ranks, and a reranker enforces hard-constraint eligibility then scores relevance + soft preference + weak profile + quality with a stable parent_asin tie-break. A clarification policy emits the highest expected-information-gain ask_attribute, the composer validates contract/IDs and returns message + ranked recommendations + usage (deterministic fallback on failure), while dense recall and LLM rerank stay gated behind offline held-out evaluation.
+The current implementation is deterministic and entirely offline. Startup builds
+an in-memory SQLite FTS5 product index, normalized exact-evidence table,
+category-membership table, and weak quality features from the 50,000-row catalog.
+Each `respond()` call extracts evaluator-supported category, constraint,
+correction, and no-preference evidence into isolated session state. Current-turn
+and resolved-state BM25 routes are combined with category-scoped exact evidence,
+a category fallback, a weak profile fallback, deterministic tie-breaking, and
+bounded exploration of previously unseen recommendations. Clarification begins
+broadly and moves to typed attributes after a decline. Dense recall, semantic
+paraphrase handling, an explicit intent router, information-gain questions, and
+LLM reranking are not implemented and remain gated experiments.
+
+## Implementation status — 30 August 2026
+
+| Component | Status | Current behavior |
+|---|---|---|
+| Offline catalog preparation | Implemented | FTS5 fields, exact evidence, category membership, quality tie-break |
+| Session state | Implemented | Category, constraints, declined attributes, question counts, prior recommendations |
+| Sparse multi-route retrieval | Implemented | Current message and accumulated-state BM25 routes |
+| Exact structured route | Implemented | Normalized evidence matched within the resolved coarse category |
+| Rank fusion and reranking | Implemented | Rank-based route scores, exact-hit/intersection boosts, quality and stable-ID ties |
+| Boundary and override handling | Implemented | Declined attributes are retired; pre-correction recommendations become eligible again |
+| Clarification | Partial | Broad `other` questions followed by a fixed typed sequence; not information gain |
+| Intent router and typed hard/soft ops | Planned | Current parser recognizes the official simulator templates only |
+| Dense or semantic retrieval | Planned | No embeddings or vector database |
+| LLM parsing or reranking | Planned | No model calls, tokens, credentials, network, or API cost |
+
+The diagram below is the target architecture. The table above is the source of
+truth for what is implemented today.
 
 ```mermaid
 flowchart TB

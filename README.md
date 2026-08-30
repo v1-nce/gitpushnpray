@@ -21,6 +21,20 @@ For each session, your agent receives an anonymized preference profile and a sho
 
 The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
 
+## Current Solution
+
+The repository now contains a deterministic, offline shopping agent rather than
+the original stateless baseline. It builds in-memory SQLite FTS5, exact-evidence,
+and category indexes once at startup. During a session it accumulates category
+and constraint evidence, combines current-turn and resolved-state sparse routes,
+reranks category-scoped evidence matches, avoids repeatedly returning the same
+failed candidates, and asks follow-up questions while respecting corrections and
+no-preference replies.
+
+No LLM, external API, credential, network connection, or third-party Python
+package is required. See `documentations/ARCHITECTURE.md` for implemented versus
+planned components.
+
 ## Download the Catalog
 
 Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
@@ -32,19 +46,58 @@ mv catalog.jsonl data/catalog.jsonl
 
 Verify the downloaded file using the published `SHA256SUMS` file.
 
-## Run the Starter
+## Run and Test the Agent
 
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+Python 3.10 or later is recommended. The agent uses only the Python standard library.
 
 ```bash
 python3 -m evaluator.local_evaluator
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+The command evaluates all 200 public sessions and writes per-session results and
+aggregate metrics to the ignored local file `results.json`. Do not edit the
+evaluator or public labels when reporting a local score.
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+Run the test suite:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Replay public evaluator conversations with product titles and target ranks:
+
+```bash
+python3 -X utf8 -m scripts.diagnose_sessions \
+  public_0001 public_0006 public_0002 public_0035 --top-n 10
+```
+
+Role-play a shopper looking for a real random catalog product:
+
+```bash
+python3 -X utf8 -m scripts.chat_agent --random --seed 42
+```
+
+For a stronger manual stress test, describe the displayed product naturally
+instead of copying its title or feature text.
+
+## Public Development Results
+
+| Agent | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---|---:|---:|---:|---:|---:|
+| Released weak BM25 baseline | 0.125 | 0.068034 | 9.81 | 0.119 | 0.106710 |
+| Current deterministic agent | **1.000** | **0.699296** | **2.175** | **0.8825** | **0.886289** |
+
+The current result was reproduced byte-for-byte in two clean evaluator processes.
+Seven focused unit tests pass. One complete run took approximately 33.2 seconds
+on the development Windows machine, including index construction and all 200
+sessions.
+
+These are public-development results, not private-set results. All 200 public
+sessions were inspected during development, so they are no longer an unbiased
+holdout. The simulator also returns catalog-grounded constraints close to
+verbatim, which favors the exact-evidence route. Natural paraphrases and changed
+dialogue templates remain important generalization risks. See
+`documentations/EXPERIMENTS.md` for the experiment history and limitations.
 
 ## Agent Interface
 
@@ -83,7 +136,10 @@ Only exact `parent_asin` equality produces a hit. Core metrics are also reported
 
 ## Model Choice and Cost
 
-Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer may reimburse model costs through prizes instead of issuing API keys.
+The current implementation uses deterministic Python and SQLite FTS5. It reports
+zero model tokens and has no API cost or network dependency. Dense retrieval and
+LLM reranking are intentionally deferred until an offline experiment demonstrates
+a reproducible gain that justifies their latency, memory, and cost.
 
 ## Files
 
@@ -93,8 +149,12 @@ docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract
 docs/evaluation_config.json       scoring configuration
 docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
+starter/agent.py                  current deterministic hybrid agent
 evaluator/local_evaluator.py      public-set simulator and scorer
+scripts/diagnose_sessions.py      public conversation replay and failure inspection
+scripts/chat_agent.py             manual role-play against a known catalog target
+tests/test_agent.py               state, evidence, and clarification tests
+documentations/EXPERIMENTS.md     public experiment history and limitations
 ```
 
 ## Judging and Submission Policy
