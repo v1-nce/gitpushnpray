@@ -208,6 +208,26 @@ table here is the human-readable index.
 
 ## Reverted experiments (lineage dead ends)
 
+- **Constraint specificity weighting / IDF** (parent 006, reverted): weighted each
+  satisfied requirement by its rarity, `log(catalog_size / (1 + match_count))`,
+  accumulated per product and inserted as a tie-break between the evidence rung and
+  the quality prior. The intent was to stop the popularity prior from settling ties
+  in favour of bestsellers over the customer's actual target.
+
+  Measured flat. Public `0.948423` and unseen targets `0.880358` were byte-identical
+  to the parent, MRR unchanged to six decimals; the paraphrase shadow moved
+  `0.794653` to `0.795653`, one session shifting rank on a single seed.
+
+  The reason is structural rather than a tuning problem, and it was predicted before
+  the run. Rarity can only separate products that satisfy *different* requirements of
+  the same count. The surviving ties are products satisfying the *identical*
+  requirement set, drawn from one category, so every candidate receives exactly the
+  same weight sum and the ordering is unchanged. Breaking those ties needs evidence
+  the agent does not currently hold, not a reweighting of the evidence it does.
+
+  Reverted rather than kept: a fourth sort key and a restructured accumulator are not
+  justified by +0.001 on a self-authored benchmark. No artifact retained.
+
 - **Partition-entropy typed clarifier** (parent 002, reverted): chose the typed
   attribute with the most distinct values over the current tier. On the public
   simulator `feature` is the evaluator's catch-all slot, so it picked narrower
@@ -226,7 +246,11 @@ table here is the human-readable index.
 4. Compare the fixed question policy with category-grounded candidate entropy
    or expected information gain.
 5. Improve ordering among products that share all disclosed evidence, targeting
-   MRR without sacrificing Hit Rate or MTTC.
+   MRR without sacrificing Hit Rate or MTTC. Constraint rarity has been tried and
+   cannot help here (see the reverted IDF experiment): products in a tie satisfy
+   the identical requirement set and therefore carry identical weight. A useful
+   attempt must introduce evidence the agent does not yet hold, such as asking a
+   question chosen to split the current tier rather than to fill an unfilled slot.
 6. Reduce the 20-25 s cold start and ~301 MB resident footprint, most plausibly by
    persisting the SQLite index instead of rebuilding it per process, before any
    embedding or LLM reranker adds to either budget.
