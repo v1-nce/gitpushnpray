@@ -47,6 +47,48 @@ product evidence. The +0.055 Hit Rate gain illustrates why parser/retrieval eval
 must extend beyond copied catalog strings. This benchmark is synthetic and is not a
 claim about organizer-private performance.
 
+### Target sampling correction: both generalization benchmarks were measuring the wrong catalog
+
+The unseen-target and paraphrase benchmarks both sampled targets uniformly from the
+50,000-product catalog. Official targets are real purchase records drawn from the
+Clothing 5-core split, and their popularity profile is nothing like the catalog's:
+
+| Target pool | Median review count | Share with fewer than 5 reviews |
+|---|---:|---:|
+| Official public targets | 7078 | 1.0% |
+| Whole catalog (the old sampling pool) | 12 | 30.5% |
+
+Uniform sampling therefore built long-tail test sets, and any ranking signal correlated
+with popularity was judged against a distribution the organizer will never present. Both
+benchmarks now draw one unseen product per public target from the same log2 review-count
+band; `--uniform-targets` reproduces the old pool.
+
+The correction moves the numbers a long way, and in the optimistic direction:
+
+| Benchmark | Uniform sampling (superseded) | Popularity-matched | Artifact |
+|---|---:|---:|---|
+| Unseen targets, official wording | 0.880358 | **0.944868** | [008](008_unseen_popularity_matched.json) |
+| Paraphrased wording | 0.794653 | **0.895854** | [009](009_shadow_popularity_matched.json) |
+
+The decomposition published earlier was wrong in proportion as well as magnitude. Against
+the corrected pools, unseen target products cost **0.004** (public `0.948423` to
+`0.944868`), not 0.072, and unfamiliar wording costs **0.049** (to `0.895854`), not 0.192.
+The agent transfers to unseen products almost perfectly; essentially all remaining
+generalization risk is in phrasing.
+
+This was found by accident. The coverage-precision tie-break below improved both
+generalization benchmarks while destroying public MRR, an asymmetry too large to be
+tuning noise, and investigating it exposed the sampling flaw rather than a property of
+the change.
+
+Two consequences for how these benchmarks are read:
+
+1. A number from a self-authored benchmark is only as good as its sampling. Both of
+   these were built carefully in every respect except the one that mattered.
+2. The public set, for all that it is saturated and tuned on, is the only benchmark
+   whose target distribution is known to be correct. Treat a large public regression as
+   evidence against a change even when the generalization benchmarks approve of it.
+
 ### Unseen-target benchmark: separating the two causes of the shadow drop
 
 The paraphrase benchmark changes the target product **and** the customer's wording,
@@ -107,6 +149,13 @@ new code path.
 | Baseline (002) | 0.952414 | 0.687516 | 0.880358 |
 | A: embedded replaces the typed route | 0.943267 | **0.824353** | 0.880358 |
 | B: embedded merged with the typed route (**adopted**) | **0.948423** | 0.794653 | 0.880358 |
+
+The variant table below was measured on the uniform pool and its shadow column is
+therefore superseded; re-measured against the popularity-matched pools, the adopted
+change costs 0.004 public and 0.002 unseen and gains **0.047** on paraphrased wording
+(parent `0.849141` to `0.895854`, Hit Rate 0.920 to 0.945, MRR 0.748470 to 0.848512).
+The change remains justified, but the headline gain is 0.047 rather than the 0.107 first
+reported.
 
 Variant A scores higher on the shadow benchmark but drops public Hit Rate@10 from
 1.000 to 0.990. Replaying `public_0014` showed why: the narrower exact set replaced
@@ -208,6 +257,33 @@ table here is the human-readable index.
 
 ## Reverted experiments (lineage dead ends)
 
+- **Coverage-precision tie-break** (parent 006, reverted, but productive): replaced the
+  popularity prior with the fraction of each product's description accounted for by the
+  disclosed requirements, so a plain product matching narrowly would outrank a
+  feature-dense one satisfying the same requirements incidentally.
+
+  | Benchmark | Parent | Coverage precision |
+  |---|---:|---:|
+  | Public | 0.948423 | 0.885062 |
+  | Unseen targets (uniform pool) | 0.880358 | 0.892468 |
+  | Paraphrase shadow (uniform pool) | 0.794653 | 0.829236 |
+
+  Both generalization benchmarks improved while public MRR collapsed from `0.899409` to
+  `0.725208`. That asymmetry was the useful part: it was far too large for tuning noise,
+  and chasing it exposed the target sampling flaw described above rather than anything
+  about the change itself.
+
+  With the cause understood the result reads plainly. Official targets are real purchase
+  records and are overwhelmingly popular, so the popularity prior is a genuinely
+  informative signal for them; the uniform pools were long-tail, where it is noise.
+  Demoting it therefore looked good on two broken benchmarks and bad on the one whose
+  target distribution was right. Rejected on those grounds rather than re-measured,
+  because the public regression is the trustworthy measurement here.
+
+  Worth revisiting only as a tie-break *after* the quality prior rather than instead of
+  it, where it could order products that popularity leaves tied without discarding a
+  signal that demonstrably works. No artifact retained.
+
 - **Tier-splitting clarification** (parent 006, reverted): kept the `other`-first
   ask, then chose the typed fallback attribute whose values partition the currently
   tied top group most evenly, by entropy over per-product indexed values. Intended to
@@ -275,18 +351,18 @@ table here is the human-readable index.
 4. Compare the fixed question policy with category-grounded candidate entropy
    or expected information gain.
 5. Improve ordering among products that share all disclosed evidence, targeting
-   MRR without sacrificing Hit Rate or MTTC. Two approaches are now excluded.
+   MRR without sacrificing Hit Rate or MTTC. Note that the corrected benchmarks put
+   unseen-target MRR at `0.899560`, level with the public set, so this headroom is
+   far smaller than the uniform-pool measurement suggested. Three approaches are now
+   excluded.
    Reweighting the evidence cannot work (reverted IDF experiment): tied products
    satisfy the identical requirement set and carry identical weight. Acquiring
    more evidence by question selection cannot pay for itself either (reverted
    tier-splitting experiment): the turn it costs exceeds the rank it buys.
-   What remains untried is a discriminator computed from the product itself
-   rather than from the constraints, since tied products differ in their catalog
-   text even when their satisfied-requirement sets are identical. The candidate
-   is coverage precision: prefer the product whose description is most fully
-   explained by the disclosed evidence, rather than the most popular one, so a
-   narrowly matching product outranks a broad one that happens to satisfy the
-   same requirements incidentally.
+   Coverage precision, the per-product discriminator, has now been tried as a
+   replacement for the popularity prior and rejected: popularity is real signal for
+   targets that are real purchase records. It remains untried as a tie-break placed
+   after the quality prior instead of before it.
 6. Reduce the 20-25 s cold start and ~301 MB resident footprint, most plausibly by
    persisting the SQLite index instead of rebuilding it per process, before any
    embedding or LLM reranker adds to either budget.

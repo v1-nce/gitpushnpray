@@ -27,20 +27,25 @@ the typed route, so specific evidence improves ordering without ever costing rec
 | Evaluation | Sessions | Targets | Wording | Hit Rate@10 | MRR | MTTC | TechnicalScore |
 |---|---:|---|---|---:|---:|---:|---:|
 | Official public development set | 200 | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
-| Unseen targets, official wording | 200 | unseen | official | 0.965 | 0.760861 | 2.520 | 0.880358 |
-| Catalog-disjoint paraphrase V1 | 200 | unseen | rewritten | 0.890 | 0.649177 | 3.255 | 0.794653 |
+| Unseen targets, official wording | 200 | unseen | official | 0.995 | 0.899560 | 2.125 | 0.944868 |
+| Catalog-disjoint paraphrase V1 | 200 | unseen | rewritten | 0.945 | 0.848512 | 2.560 | 0.895854 |
 
 The public set was repeatedly used during development and is not an unbiased holdout.
 The two catalog-disjoint benchmarks differ in exactly one variable, which separates the
-causes of the drop: unseen target products cost 0.068, and unfamiliar wording costs a
-further 0.086. The wording penalty was 0.192 before the agent learned to match catalog
-phrases embedded in a customer's own wrapping.
+causes of the drop: unseen target products cost 0.004, and unfamiliar wording costs a
+further 0.049.
+
+Both catalog-disjoint benchmarks popularity-match their targets to the public set.
+Official targets are real purchase records with a median of 7078 reviews against 12 for
+the catalog, so uniform sampling produces a long-tail test set unlike anything the
+organizer presents, and understates the scores by 0.06 to 0.10. Earlier revisions of
+this report used uniform sampling.
 
 The unseen-target benchmark is the closer private-set proxy, since it drives the
-unmodified official dialogue policy against products excluded from the public set;
-three seeds span 0.880 to 0.895. It assumes the organizer's private harness uses that
-same policy. The paraphrase benchmark bounds the case where it does not. Neither is a
-guarantee of organizer-private performance.
+unmodified official dialogue policy against products excluded from the public set. It
+assumes the organizer's private harness uses that same policy. The specification
+reserves the right to add natural-language paraphrasing, which the paraphrase benchmark
+bounds. Neither is a guarantee of organizer-private performance.
 
 ## Cost, tokens, latency, and fallback
 

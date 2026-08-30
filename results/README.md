@@ -31,6 +31,8 @@ are the data.
 | 005 | unseen_official_v1 | 004 | [`005_unseen_official_v1.json`](005_unseen_official_v1.json) | Official dialogue policy on catalog-disjoint targets; isolates unseen products from paraphrasing. No agent change |
 | 006 | embedded_phrase_v1 | 005 | [`006_embedded_phrase_v1.json`](006_embedded_phrase_v1.json) | Match the longest catalog phrase embedded in a payload, merged with the typed route (public run) |
 | 007 | embedded_phrase_shadow | 006 | [`007_embedded_phrase_shadow.json`](007_embedded_phrase_shadow.json) | Same change measured on the paraphrase benchmark |
+| 008 | unseen_popularity_matched | 007 | [`008_unseen_popularity_matched.json`](008_unseen_popularity_matched.json) | Unseen-target benchmark with targets popularity-matched to the public set. Supersedes 005. No agent change |
+| 009 | shadow_popularity_matched | 008 | [`009_shadow_popularity_matched.json`](009_shadow_popularity_matched.json) | Paraphrase benchmark with the same sampling correction. Supersedes 003 and 007. No agent change |
 
 ## How to record a new experiment
 
@@ -56,6 +58,9 @@ are the data.
 ## Rules
 
 - Never edit a committed artifact in place; a new change gets a new id.
+- Artifacts 003, 005 and 007 were produced with uniform target sampling and are
+  superseded by 008 and 009. They are retained because they are the record of what
+  was measured at the time, not because their numbers still stand.
 - Never overwrite `docs/baseline_results.json`, `docs/evaluation_config.json`,
   the evaluator, or public labels to change a reported score.
 - Raw JSON is the source of truth; the markdown tables are an index, so update

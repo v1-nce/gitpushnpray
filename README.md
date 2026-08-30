@@ -100,7 +100,7 @@ instead of copying its title or feature text.
 | Current deterministic agent | **1.000** | **0.899409** | **2.070** | **0.893** | **0.948423** |
 
 The current result was reproduced byte-for-byte in two clean evaluator processes.
-Twenty-three focused unit tests pass. A clean public run took approximately 41 seconds on
+Twenty-five focused unit tests pass. A clean public run took approximately 41 seconds on
 the development machine, including index construction and all 200 sessions; runtime is
 hardware-dependent.
 
@@ -120,19 +120,23 @@ variable so the causes can be told apart.
 | Benchmark | Targets | Wording | Hit Rate@10 | MRR | MTTC | TechnicalScore |
 |---|---|---|---:|---:|---:|---:|
 | Official public set | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
-| Unseen targets, seed `20260830` | unseen | official | 0.965 | 0.760861 | 2.520 | **0.880358** |
-| Paraphrase V1, seed `20260830` | unseen | rewritten | 0.890 | 0.649177 | 3.255 | 0.794653 |
+| Unseen targets, seed `20260830` | unseen | official | 0.995 | 0.899560 | 2.125 | **0.944868** |
+| Paraphrase V1, seed `20260830` | unseen | rewritten | 0.945 | 0.848512 | 2.560 | 0.895854 |
 
-Unseen target products cost 0.068; unfamiliar wording costs a further 0.086. Matching
-catalog phrases embedded in conversational wrapping closed roughly half of the wording
-gap, which was 0.192 before that change. Three seeds of the unseen-target benchmark
-span 0.880 to 0.895.
+Both benchmarks draw one unseen product per public target from the same review-count
+band. This matters more than it sounds: official targets are real purchase records with
+a median of 7078 reviews, against 12 for the catalog as a whole, so sampling the catalog
+uniformly builds a long-tail test set the organizer would never present. Earlier
+revisions of this table used uniform sampling and understated both scores by 0.06 to
+0.10. Pass `--uniform-targets` to reproduce that pool.
 
-Read together: if the organizer's private harness uses the dialogue policy shipped in
-`evaluator/local_evaluator.py`, the expected private score is near **0.88**. If their
-phrasing differs from those templates, the paraphrase figure is the better guide. See
-[`005_unseen_official_v1.json`](results/005_unseen_official_v1.json) and
-[`003_shadow_paraphrase_v1.json`](results/003_shadow_paraphrase_v1.json).
+Unseen target products cost 0.004; unfamiliar wording costs a further 0.049. Read
+together: if the organizer's private harness uses the dialogue policy shipped in
+`evaluator/local_evaluator.py`, the expected private score is near **0.945**. The
+specification reserves the right to add natural-language paraphrasing, in which case
+the lower figure is the better guide. See
+[`008_unseen_popularity_matched.json`](results/008_unseen_popularity_matched.json) and
+[`009_shadow_popularity_matched.json`](results/009_shadow_popularity_matched.json).
 
 Run them with:
 
