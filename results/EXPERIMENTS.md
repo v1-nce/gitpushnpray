@@ -89,6 +89,36 @@ Two consequences for how these benchmarks are read:
    whose target distribution is known to be correct. Treat a large public regression as
    evidence against a change even when the generalization benchmarks approve of it.
 
+### Sealed-seed check on the unseen-target benchmark
+
+The agent has no fitted parameters, so the unseen-target benchmark cannot be
+contaminated by training. It can still be consumed by selection: roughly five
+accept/reject decisions were taken with its numbers in view (adopting embedded phrase
+matching, choosing merge over replace, and rejecting IDF weighting, tier-splitting
+clarification, and the coverage-precision tie-break). Every one used seed `20260830`.
+
+Two seeds that informed no decision were therefore run as a sealed check:
+
+| Seed | Informed a decision | Hit Rate@10 | MRR | TechnicalScore |
+|---|---|---:|---:|---:|
+| `20260830` | yes, all of them | 0.995 | 0.899560 | 0.944868 |
+| `31337` | no | 0.975 | 0.861603 | 0.918981 |
+| `987654` | no | 0.995 | 0.890262 | 0.942379 |
+
+One sealed seed reproduces the tuning seed almost exactly; the other is 0.026 lower.
+The tuning seed is the highest of the three, which is a mild warning, though at this
+spread and with three samples it is consistent with ordinary sampling variation rather
+than measurable selection damage. The published estimate is a range, 0.92 to 0.945,
+centred near 0.935.
+
+Most of the decisions above were rejections driven by the *public* number rather than
+acceptances driven by this one, which limits the exposure. The coverage-precision
+tie-break is the clearest case: both generalization benchmarks approved it and it was
+rejected on the public regression.
+
+Standing discipline: tune against `20260830`, and keep a seed sealed for a final check
+before submission. A seed loses its value the moment a decision is made against it.
+
 ### Unseen-target benchmark: separating the two causes of the shadow drop
 
 The paraphrase benchmark changes the target product **and** the customer's wording,

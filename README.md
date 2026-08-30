@@ -130,11 +130,14 @@ uniformly builds a long-tail test set the organizer would never present. Earlier
 revisions of this table used uniform sampling and understated both scores by 0.06 to
 0.10. Pass `--uniform-targets` to reproduce that pool.
 
-Unseen target products cost 0.004; unfamiliar wording costs a further 0.049. Read
-together: if the organizer's private harness uses the dialogue policy shipped in
-`evaluator/local_evaluator.py`, the expected private score is near **0.945**. The
-specification reserves the right to add natural-language paraphrasing, in which case
-the lower figure is the better guide. See
+Unseen target products cost 0.004; unfamiliar wording costs a further 0.049.
+
+The unseen-target score varies with the draw of products. Seed `20260830` above was
+used for every development decision, so two seeds never used for any choice were run
+as a sealed check: `31337` scores 0.918981 and `987654` scores 0.942379. Report the
+expected private score as **0.92 to 0.945**, centred near **0.935**, rather than as a
+single figure. The specification reserves the right to add natural-language
+paraphrasing, in which case the lower paraphrase figure is the better guide. See
 [`008_unseen_popularity_matched.json`](results/008_unseen_popularity_matched.json) and
 [`009_shadow_popularity_matched.json`](results/009_shadow_popularity_matched.json).
 

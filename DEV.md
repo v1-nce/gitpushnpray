@@ -34,7 +34,16 @@ Repeat this cycle. Change **one** thing per pass.
   checked-in default.
 - Never edit `evaluator/`, `data/public_set.jsonl`, or `docs/baseline_results.json` to move a score.
 - Public results are development numbers, not private-set estimates — all 200 sessions
-  are seen during tuning. Record each pass in `documentations/EXPERIMENTS.md`.
+  are seen during tuning. Record each pass in `results/EXPERIMENTS.md`.
+- Tune the generalization benchmarks against seed `20260830` only. Keep at least one
+  other seed sealed and run it once, before submission. A benchmark has no fitted
+  parameters but is still consumed by selection: every accept/reject decision taken
+  with its score in view spends some of it. Quote a range across seeds, never a single
+  seed's number.
+- The public set is saturated and tuned on, but its target distribution is the only one
+  known to be correct — official targets are real purchase records with a median of
+  7078 reviews against 12 for the catalog. Treat a large public regression as evidence
+  against a change even when the generalization benchmarks approve of it.
 
 ## Manual smoke test
 

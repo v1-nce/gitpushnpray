@@ -43,7 +43,15 @@ this report used uniform sampling.
 
 The unseen-target benchmark is the closer private-set proxy, since it drives the
 unmodified official dialogue policy against products excluded from the public set. It
-assumes the organizer's private harness uses that same policy. The specification
+assumes the organizer's private harness uses that same policy.
+
+Its score depends on which unseen products are drawn. Seed `20260830` informed every
+development decision, so two seeds that informed none were run as a sealed check:
+`31337` gives 0.918981 and `987654` gives 0.942379, against 0.944868 for the tuning
+seed. The expected private score is therefore reported as a range, 0.92 to 0.945,
+centred near 0.935. The tuning seed being the highest of the three is consistent with
+ordinary sampling variation at this spread, but it is the reason the range rather than
+the point estimate is quoted. The specification
 reserves the right to add natural-language paraphrasing, which the paraphrase benchmark
 bounds. Neither is a guarantee of organizer-private performance.
 
