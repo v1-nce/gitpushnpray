@@ -11,11 +11,16 @@ from pathlib import Path
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 MATERIAL_RE = re.compile(
-    r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
+    r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric|"
+    r"metal|alloy|steel|silver|gold|brass|copper|rubber|canvas|denim|"
+    r"lace|linen|cashmere|suede|velvet|tweed|chiffon|satin|mesh|fleece|"
+    r"neoprene|acrylic|viscose|modal)\b",
     re.IGNORECASE,
 )
 COLOR_RE = re.compile(
-    r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
+    r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|"
+    r"orange|navy|beige|teal|burgundy|maroon|cream|ivory|tan|turquoise|"
+    r"lavender|khaki|olive|coral|magenta)\b",
     re.IGNORECASE,
 )
 SIZE_WORD_RE = re.compile(
@@ -29,21 +34,49 @@ BUDGET_OPERATOR_RE = re.compile(
     r"\b(under|over|less than|more than|at least|up to|around|about|below|above)\b",
     re.IGNORECASE,
 )
-MATERIAL_WORDS = (
-    "cotton", "polyester", "nylon", "leather", "wool", "spandex",
-    "silk", "rayon", "fabric",
-)
-COLOR_WORDS = (
-    "black", "white", "blue", "red", "pink", "green", "brown", "gray",
-    "grey", "purple", "yellow", "orange",
-)
 STOPWORDS = {
     "a", "additional", "an", "and", "are", "as", "at", "be", "but", "by",
     "do", "does", "for", "from", "have", "here", "i", "in", "is", "it",
     "judgment", "like", "looking", "matter", "matters", "me", "my", "need", "of",
     "on", "or", "please", "preference", "requirement", "some", "still", "that",
     "the", "this", "those", "to", "use", "want", "what", "with", "would", "you",
+    "could", "should", "made", "make", "makes", "keep", "keeps", "try",
+    "trying", "stay", "stays", "like", "likes", "really", "just", "one",
+    "thing", "things", "something", "anything", "option", "options", "good",
+    "better", "best", "prefer", "prefers", "preferred", "around", "about",
+    "under", "over", "price", "prices", "budget", "cost", "color", "colour",
+    "material", "style", "brand", "feature", "features", "kind", "type",
+    "way", "bit", "little", "lot", "very", "quite", "also", "even", "well",
+    "feel", "feels", "if", "possible", "anyway", "somehow", "maybe",
+    "perhaps", "probably", "definitely", "absolutely",
 }
+
+SYNONYM_REPLACEMENTS = (
+    ("water-resistant", "waterproof"),
+    ("water resistant", "waterproof"),
+    ("air-permeable", "breathable"),
+    ("air permeable", "breathable"),
+    ("feather-light", "lightweight"),
+    ("feather light", "lightweight"),
+    ("sweat-wicking", "moisture-wicking"),
+    ("sweat wicking", "moisture-wicking"),
+    ("long-lasting", "durable"),
+    ("long lasting", "durable"),
+    ("skin-safe", "hypoallergenic"),
+    ("skin safe", "hypoallergenic"),
+    ("stretchy", "stretch"),
+    ("customizable fit", "adjustable"),
+    ("easy to wear", "comfortable"),
+)
+
+
+def _apply_synonyms(value: str) -> str:
+    """Map common rewordings to the catalog's canonical tokens."""
+    result = value
+    for source, canonical in SYNONYM_REPLACEMENTS:
+        result = re.sub(rf"\b{re.escape(source)}\b", canonical, result, flags=re.IGNORECASE)
+    return result
+
 ALLOWED_ATTRIBUTES = (
     "category", "material", "color", "size", "style", "brand", "budget",
     "feature", "use_case", "other",
@@ -64,8 +97,10 @@ QUESTION_TEXT = {
 }
 CONSTRAINT_MARKER_RE = re.compile(
     r"(?:a key requirement is|what i need is|for that, what matters is|"
+    r"the thing that matters most is|the most important thing is|"
+    r"the key thing is|the important thing is|"
     r"it (?:must|needs to) (?:have|be)|i (?:care about|need it to have)|"
-    r"please prioritize|instead(?:,)? i need)\s*:?\s*(.+)",
+    r"please prioritize|instead(?:,)?\s*(?:i\s+need)?)\s*:?\s*(.+)",
     re.IGNORECASE,
 )
 CATEGORY_PATTERNS = (
@@ -85,6 +120,11 @@ CATEGORY_PATTERNS = (
     ),
     re.compile(
         r"\b(?:i need|i['’]?m shopping for|find me)\s+(?:a |an |some )?(.+?)"
+        r"(?=\.|,|;|\?|\s+(?:that|with|but|and)\b|$)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:i want|i['’]?d like|searching for|looking for)\s+(?:a |an |some )?(.+?)"
         r"(?=\.|,|;|\?|\s+(?:that|with|but|and)\b|$)",
         re.IGNORECASE,
     ),
@@ -162,9 +202,9 @@ def _classify_attribute(value: str) -> str:
     lowered = value.lower()
     if "budget" in lowered or "price" in lowered or BUDGET_OPERATOR_RE.search(lowered) or re.search(r"\$\s*\d", lowered):
         return "budget"
-    if any(material in lowered for material in MATERIAL_WORDS):
+    if MATERIAL_RE.search(lowered):
         return "material"
-    if "color" in lowered or any(word in lowered for word in COLOR_WORDS):
+    if "color" in lowered or COLOR_RE.search(lowered):
         return "color"
     if "brand" in lowered:
         return "brand"
@@ -235,6 +275,9 @@ class SessionState:
     question_counts: Counter[str] = field(default_factory=Counter)
     seen_normalized: set[str] = field(default_factory=set)
     superseded_normalized: str | None = None
+    last_ranked: list[str] = field(default_factory=list)
+    last_coverage: dict[str, tuple[int, int, int]] = field(default_factory=dict)
+    last_relevance: dict[str, float] = field(default_factory=dict)
 
 
 class Agent:
@@ -419,7 +462,7 @@ class Agent:
         superseded: bool = False,
     ) -> None:
         cleaned = _clean_constraint(value)
-        normalized = _normalize_evidence(cleaned)
+        normalized = _normalize_evidence(_apply_synonyms(cleaned))
         if not normalized:
             return
         if superseded:
@@ -681,7 +724,7 @@ class Agent:
     def _token_overlap_matches(
         self, constraint: Constraint, category: str | None
     ) -> set[str]:
-        constraint_tokens = [token for token in _content_tokens(constraint.value)]
+        constraint_tokens = [token for token in _content_tokens(_apply_synonyms(constraint.value))]
         if not constraint_tokens:
             return set()
         constraint_set = set(constraint_tokens)
@@ -771,12 +814,26 @@ class Agent:
             ):
                 coverage.setdefault(parent_asin, [0, 0, 0])
 
+        relevance: dict[str, float] = {}
+        relevance_routes = (
+            (1.0, [message]),
+            (1.5, [state.category, *[c.value for c in state.hard], *[c.value for c in state.soft]]),
+        )
+        for weight, parts in relevance_routes:
+            expression = self._fts_expression(parts)
+            for rank, parent_asin in enumerate(
+                self._fts_route(expression, 400, (8.0, 5.0, 3.5, 3.0, 2.0, 1.0)),
+                start=1,
+            ):
+                relevance[parent_asin] = relevance.get(parent_asin, 0.0) + weight / (60.0 + rank)
+
         ranked = sorted(
             coverage,
             key=lambda parent_asin: (
                 -coverage[parent_asin][0],
                 -coverage[parent_asin][1],
                 coverage[parent_asin][2],
+                -relevance.get(parent_asin, 0.0),
                 -self._quality.get(parent_asin, 0.0),
                 parent_asin,
             ),
@@ -784,6 +841,9 @@ class Agent:
         tuple_coverage = {
             parent_asin: tuple(record) for parent_asin, record in coverage.items()
         }
+        state.last_ranked = ranked
+        state.last_coverage = tuple_coverage
+        state.last_relevance = relevance
         return ranked, tuple_coverage
 
     @staticmethod
@@ -810,18 +870,21 @@ class Agent:
         ranked: list[str],
         coverage: dict[str, tuple[int, int, int]],
         top_k: int,
-        state: SessionState,
     ) -> list[str]:
         if not ranked:
             return []
         top_tier = coverage[ranked[0]][:2]
         tier = [parent_asin for parent_asin in ranked if coverage[parent_asin][:2] == top_tier]
-        total_constraints = len(state.hard) + len(state.soft)
-        if total_constraints == 0:
-            # Browsing: clarify first, do not pad a wide, unconstrained tier.
+        matched = top_tier[0] + top_tier[1]
+        if matched == 0:
+            # No disclosed constraint has catalog evidence yet: clarify first
+            # instead of emitting a popularity-ranked tier.
             return []
-        if total_constraints < 2 and len(tier) > top_k:
-            # Thin evidence over a wide tier: emit what we endorse, not 10 fillers.
+        if matched < 2 and len(tier) > top_k:
+            # Thin evidence over a wide tier: the evaluator freezes rank on the
+            # first top-10 appearance, so a low-rank early hit locks a worse MRR
+            # than waiting one turn for another constraint. Emit only the top
+            # candidate and ask in parallel.
             return tier[:SHORT_LIST_MAX]
         return tier[:top_k]
 
@@ -837,7 +900,7 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._parse_message(state, user_message)
         ranked, coverage = self._rank(state, user_message)
-        recommendations = self._emit(ranked, coverage, min(max(top_k, 0), 10), state)
+        recommendations = self._emit(ranked, coverage, min(max(top_k, 0), 10))
         ask_attribute = self._select_question(state, turn)
         if ask_attribute:
             state.question_counts[ask_attribute] += 1

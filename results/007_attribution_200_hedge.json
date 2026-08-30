@@ -1,0 +1,61 @@
+{
+  "verbatim": {
+    "sample_count": 200,
+    "hit_rate_at_10": 0.98,
+    "mrr": 0.77572,
+    "mttc": 2.4,
+    "coverage": {
+      "zero": 0,
+      "one": 41,
+      "multi": 159
+    }
+  },
+  "typed": {
+    "sample_count": 200,
+    "hit_rate_at_10": 0.915,
+    "mrr": 0.72199,
+    "mttc": 3.02,
+    "coverage": {
+      "zero": 0,
+      "one": 52,
+      "multi": 148
+    },
+    "miss_classification": {
+      "none": 167,
+      "ordering": 26,
+      "parser": 6,
+      "retrieval": 1
+    }
+  },
+  "filler": {
+    "sample_count": 200,
+    "hit_rate_at_10": 0.92,
+    "mrr": 0.726216,
+    "mttc": 2.97,
+    "coverage": {
+      "zero": 1,
+      "one": 39,
+      "multi": 160
+    },
+    "miss_classification": {
+      "none": 165,
+      "retrieval": 7,
+      "ordering": 28
+    }
+  },
+  "structure": {
+    "sample_count": 200,
+    "hit_rate_at_10": 0.965,
+    "mrr": 0.739282,
+    "mttc": 2.5,
+    "coverage": {
+      "zero": 0,
+      "one": 16,
+      "multi": 184
+    },
+    "miss_classification": {
+      "none": 187,
+      "ordering": 13
+    }
+  }
+}

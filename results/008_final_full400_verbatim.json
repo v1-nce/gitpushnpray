@@ -1,0 +1,41 @@
+{
+  "verbatim": {
+    "sample_count": 400,
+    "hit_rate_at_10": 0.975,
+    "mrr": 0.797001,
+    "mttc": 2.4775,
+    "efficiency": 0.85225,
+    "recommended_technical_score": 0.89705,
+    "reported_token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    "scenario_metrics": {
+      "boundary": {
+        "sample_count": 20,
+        "hit_rate_at_10": 1.0,
+        "mrr": 0.699583,
+        "mttc": 3.5
+      },
+      "browsing": {
+        "sample_count": 160,
+        "hit_rate_at_10": 0.96875,
+        "mrr": 0.783296,
+        "mttc": 2.48125
+      },
+      "buying": {
+        "sample_count": 160,
+        "hit_rate_at_10": 0.96875,
+        "mrr": 0.784484,
+        "mttc": 1.93125
+      },
+      "intent_override": {
+        "sample_count": 60,
+        "hit_rate_at_10": 1.0,
+        "mrr": 0.899398,
+        "mttc": 3.583333
+      }
+    }
+  }
+}

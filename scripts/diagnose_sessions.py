@@ -14,7 +14,7 @@ from evaluator.local_evaluator import (
     materialize_hidden_fields,
     normalize_recommendations,
 )
-from starter.agent import Agent, _normalize_evidence
+from starter.agent import Agent
 
 
 def main() -> None:
@@ -123,15 +123,14 @@ def main() -> None:
 
         state = agent._sessions[session_id]
         print(f"\nRESOLVED CATEGORY: {state.category!r}")
-        for constraint in state.constraints:
-            normalized = _normalize_evidence(constraint)
+        for constraint in [*state.hard, *state.soft]:
             total, target_rows = agent.connection.execute(
                 "SELECT COUNT(*), SUM(parent_asin = ?) FROM evidence WHERE normalized = ?",
-                (target, normalized),
+                (target, constraint.normalized),
             ).fetchone()
             print(
-                f"EVIDENCE: catalog_matches={total} contains_target={bool(target_rows)} "
-                f"value={constraint!r}"
+                f"EVIDENCE: [{constraint.kind}] catalog_matches={total} "
+                f"contains_target={bool(target_rows)} value={constraint.value!r}"
             )
 
 

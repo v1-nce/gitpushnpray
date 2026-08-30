@@ -25,10 +25,13 @@ The session ends when the target product appears in the scored Top 10 or after t
 
 The repository now contains a deterministic, offline shopping agent rather than
 the original stateless baseline. It builds in-memory SQLite FTS5, exact-evidence,
-and category indexes once at startup. During a session it accumulates category
-and constraint evidence, combines current-turn and resolved-state sparse routes,
-reranks category-scoped evidence matches, and asks follow-up questions while
-distinguishing preference reprioritization from explicit retraction.
+typed-attribute, price, and category indexes once at startup. During a session it
+accumulates category and hard/soft constraint evidence, resolves each constraint
+through an exact -> typed -> token-overlap ladder, ranks with a strict
+lexicographic coverage ordering (hard coverage, soft coverage, match tier,
+query relevance, quality, id), demotes overridden preferences instead of
+erasing them, confidence-gates how many recommendations it emits, and asks
+follow-up questions while respecting corrections and no-preference replies.
 
 No LLM, external API, credential, network connection, or third-party Python
 package is required. See `documentations/ARCHITECTURE.md` for implemented versus
@@ -63,18 +66,13 @@ Run the test suite:
 python3 -m unittest discover -s tests -v
 ```
 
-Run the deterministic catalog-disjoint paraphrase benchmark:
+Create the reproducible train/validation/test split and benchmark the held-out
+test set (tune on train, select on validation, run test once):
 
 ```bash
-python3 -m scripts.shadow_evaluator \
-  --sample-count 200 \
-  --seed 20260830 \
-  --output results_shadow.json
+python3 -m scripts.make_splits
+python3 -X utf8 -m evaluator.local_evaluator --dataset data/splits/test.jsonl --output results/NNN_test.json
 ```
-
-The shadow benchmark excludes all public target products, varies customer phrasing,
-and publishes aggregate metrics without target IDs. It is a synthetic robustness
-check, not an estimate of the organizer's private-set score.
 
 Replay public evaluator conversations with product titles and target ranks:
 
@@ -97,31 +95,31 @@ instead of copying its title or feature text.
 | Agent | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|
 | Released weak BM25 baseline | 0.125 | 0.068034 | 9.81 | 0.119 | 0.106710 |
-| Current deterministic agent | **1.000** | **0.912048** | **2.060** | **0.894** | **0.952414** |
+| Lexicographic agent, full development set (overfit upper bound) | 1.000 | 0.912048 | 2.06 | 0.894 | 0.952414 |
+| **Unseen 400 targets, verbatim (clean generalization)** | **0.975** | **0.7970** | **2.478** | **0.852** | **0.8971** |
+| Public test split (n=40, contaminated) | 0.950 | 0.734861 | 2.825 | 0.818 | 0.858958 |
 
-The current result was reproduced byte-for-byte in two clean evaluator processes.
-Fourteen focused unit tests pass. A clean public run took approximately 14 seconds
-on the latest development machine, including index construction and all 200 sessions;
-runtime is hardware-dependent.
+The full development-set row is an overfit upper bound, not a benchmark: the
+architecture was tuned while inspecting all 200 sessions. The unseen-400 row
+uses target products that never appear in the public 200 and is the best
+available generalization proxy. The public test split is also contaminated
+(those 40 sessions informed earlier design decisions), so it is shown for
+completeness only. Eight focused unit tests pass. One complete run took
+approximately 33 seconds on the development machine, including index
+construction and all 200 sessions.
 
 These are public-development results, not private-set results. All 200 public
 sessions were inspected during development, so they are no longer an unbiased
-holdout. The simulator also returns catalog-grounded constraints close to
-verbatim, which favors the exact-evidence route. Natural paraphrases and changed
-dialogue templates remain important generalization risks. See
-`results/EXPERIMENTS.md` for the experiment history and limitations.
+holdout, and the same caveat applies to the test split: it is a fresh
+measurement, not a pristine holdout. The simulator also returns
+catalog-grounded constraints close to verbatim, which favors the exact-evidence
+route. Natural paraphrases and changed dialogue templates remain important
+generalization risks. See `results/EXPERIMENTS.md` for the experiment history
+and the split protocol.
 
-## Catalog-Disjoint Robustness Result
-
-| Benchmark | Targets | Hit Rate@10 | MRR | MTTC | TechnicalScore |
-|---|---:|---:|---:|---:|---:|
-| Paraphrase V1, seed `20260830` | 200 | **0.790** | **0.519052** | **4.160** | **0.687516** |
-
-This intentionally harder benchmark selects products outside the public target set,
-uses deterministic surface paraphrases, includes genuinely conflicting overrides,
-and preserves the official 40/40/15/5 scenario mix. Its lower score is evidence that
-public-set saturation does not imply private-set saturation. See
-[`003_shadow_paraphrase_v1.json`](results/003_shadow_paraphrase_v1.json).
+**Evaluation scope:** the unseen-400 verbatim row is the headline
+generalization estimate; the paraphrase/reworded rows in `results/EXPERIMENTS.md`
+are a robustness proxy, not a claim about the private set.
 
 ## Agent Interface
 
@@ -177,16 +175,27 @@ starter/agent.py                  current deterministic hybrid agent
 evaluator/local_evaluator.py      public-set simulator and scorer
 scripts/diagnose_sessions.py      public conversation replay and failure inspection
 scripts/chat_agent.py             manual role-play against a known catalog target
-scripts/shadow_evaluator.py       catalog-disjoint paraphrase robustness benchmark
+scripts/make_splits.py            reproducible train/val/test split generator
+scripts/make_unseen_sessions.py   unseen-target session generator
+scripts/paraphrase.py             deterministic constraint paraphraser
+scripts/bench_generalization.py   verbatim/paraphrase/reworded benchmark
+scripts/bench.py                  attribution benchmark (axes + miss classes)
+scripts/demo.py                   end-to-end demo transcript generator
+documentations/REPORT.md          Devpost-ready project report
+requirements.txt                  Python 3.10+, standard library only
+data/splits/                     train/val/test splits (seed 20260830)
+data/unseen/                     held-out unseen target sessions
 tests/test_agent.py               state, evidence, and clarification tests
 results/EXPERIMENTS.md           public experiment history and limitations
 ```
 
 ## Judging and Submission Policy
 
-- Participant submission requirements: [`docs/submission_rules.md`](docs/submission_rules.md)
-- Submission report: [`docs/SUBMISSION_REPORT.md`](docs/SUBMISSION_REPORT.md)
-- Participant release checklist: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
+- Participant submission requirements: `docs/submission_rules.md`
+- Participant release checklist: `docs/participant_release_checklist.md`
+- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
+- Organizer private release checklist: `organizer/private_release_checklist.md`
+- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
 
 ## Data Source
 

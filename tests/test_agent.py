@@ -166,6 +166,52 @@ class AgentTest(unittest.TestCase):
         )
         self.assertEqual(response["ask_attribute"], "feature")
 
+    def test_reworded_category_and_marker_extract_evidence(self) -> None:
+        self.agent.reset("session", self.profile)
+        response = self.agent.respond(
+            "session",
+            "I need a Shoes Trail Running. The thing that matters most is: waterproof membrane.",
+            1,
+            10,
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.category, "Shoes Trail Running")
+        self.assertEqual([c.normalized for c in state.hard], ["waterproof membrane"])
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "TARGET")
+
+    def test_synonym_overlap_recovers_water_resistant(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond("session", "I'm looking for Shoes Trail Running.", 1, 10)
+        response = self.agent.respond(
+            "session",
+            "For that, what matters is: water-resistant membrane.",
+            2,
+            10,
+        )
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "TARGET")
+
+    def test_reworded_override_demotes_and_replaces(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "I want a Shoes Trail Running. waterproof membrane.", 1, 10
+        )
+        self.agent.respond(
+            "session", "Actually, ignore my earlier preference. Instead, wide toe box.", 2, 10
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual([c.normalized for c in state.hard], ["wide toe box"])
+        self.assertEqual([c.normalized for c in state.soft], ["waterproof membrane"])
+
+    def test_exploratory_rest_is_not_a_constraint(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "I'm looking for Shoes Trail Running, but I'm still exploring.", 1, 10
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.category, "Shoes Trail Running")
+        self.assertEqual(state.hard, [])
+        self.assertEqual(state.soft, [])
+
 
 if __name__ == "__main__":
     unittest.main()

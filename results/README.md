@@ -1,9 +1,8 @@
 # Experiment results
 
-Raw, machine-readable evaluator outputs. Public artifacts are written by
-`evaluator/local_evaluator.py`; shadow artifacts are written by
-`scripts.shadow_evaluator`. Each artifact identifies its benchmark and is the
-**authoritative record** of that run.
+Raw, machine-readable evaluator outputs. Each file is the exact JSON written by
+`evaluator/local_evaluator.py --output <path>`, so it is reproducible and is the
+**authoritative record** of a run.
 
 ## Naming convention
 
@@ -13,7 +12,7 @@ results/NNN_slug.json
 
 - `NNN` — zero-padded, strictly increasing experiment id. Never reused.
 - `slug` — short, human-readable label (lower_snake_case).
-- One experiment = one file = one evaluator or shadow-benchmark run.
+- One experiment = one file = one evaluator run on the public set.
 
 The human-readable lineage, narrative, and side-by-side metrics live in
 [`EXPERIMENTS.md`](EXPERIMENTS.md). That table is the index; these JSON files
@@ -26,16 +25,16 @@ are the data.
 | 000 | weak_bm25_starter | — | [`../docs/baseline_results.json`](../docs/baseline_results.json) | Stateless single-query BM25 starter |
 | 001 | stateful_hybrid | 000 | [`001_stateful_hybrid.json`](001_stateful_hybrid.json) | Accumulated state, exact evidence, multi-route sparse retrieval |
 | 002 | lexicographic_v1 | 001 | [`002_lexicographic_v1.json`](002_lexicographic_v1.json) | Constraint-lattice ranker, hard/soft demotion, evidence ladder, confidence gate |
-| 003 | shadow_paraphrase_v1 | 002 | [`003_shadow_paraphrase_v1.json`](003_shadow_paraphrase_v1.json) | Catalog-disjoint dialogue benchmark plus parser wrapper normalization |
+| 003 | lexicographic_train | 002 | [`003_lexicographic_train.json`](003_lexicographic_train.json) | Same code (commit `bd7452e`); benchmark on the 120-session train split |
+| 004 | lexicographic_val | 002 | [`004_lexicographic_val.json`](004_lexicographic_val.json) | Same code; model-selection benchmark on the 40-session val split |
+| 005 | lexicographic_test | 002 | [`005_lexicographic_test.json`](005_lexicographic_test.json) | Same code; held-out benchmark on the 40-session test split |
 
 ## How to record a new experiment
 
 1. Make the code change on a branch.
-2. Run the relevant evaluator and write the artifact:
+2. Run the public evaluator and write the artifact:
    ```bash
    python -X utf8 -m evaluator.local_evaluator --output results/NNN_slug.json
-   # or
-   python -X utf8 -m scripts.shadow_evaluator --output results/NNN_slug.json
    ```
 3. Append exactly one pointer row to the lineage table in this README **and** to
    the table in [`EXPERIMENTS.md`](EXPERIMENTS.md) — id, slug, parent id,

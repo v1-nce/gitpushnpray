@@ -2,6 +2,12 @@
 
 Repeat this cycle. Change **one** thing per pass.
 
+**Data discipline:** `data/public_set.jsonl` is carved into train/val/test by
+`scripts/make_splits.py` (60/20/20, seed `20260830`; see `data/splits/README.md`).
+Tune on train, select on validation, and run test exactly once as the final
+benchmark. Never report the full-200 number as performance — that is training on
+the test set.
+
 1. **Edit** `starter/agent.py`.
 
 2. **Sanity check** — fast, catches contract breaks:
@@ -9,37 +15,48 @@ Repeat this cycle. Change **one** thing per pass.
    python -m unittest discover -s tests -v
    ```
 
-3. **Score** all 200 public sessions (write to a scratch file, never `results.json`):
+3. **Tune** on the train split:
    ```bash
-   python -m evaluator.local_evaluator --output results_candidate.json
+   python -X utf8 -m evaluator.local_evaluator --dataset data/splits/train.jsonl --output results_candidate_train.json
    ```
 
-4. **Compare** against the baseline in `docs/baseline_results.json` and your previous
-   `results_candidate.json`. Look at overall **and** per-scenario Hit@10 / MRR / MTTC.
-   A small overall gain can hide a Buying / Browsing / Intent Override / Boundary regression.
-
-5. **Diagnose** any miss or regression — replay the conversation with product titles,
-   target rank, resolved state, and evidence matches:
+4. **Select** between variants on validation:
    ```bash
-   python -X utf8 -m scripts.diagnose_sessions public_0001 public_0006 --top-n 10
+   python -X utf8 -m evaluator.local_evaluator --dataset data/splits/val.jsonl --output results_candidate_val.json
+   ```
+
+5. **Diagnose** a miss or regression on a *train* sample (never test):
+   ```bash
+   python -X utf8 -m scripts.diagnose_sessions public_0001 --dataset data/splits/train.jsonl --top-n 10
    ```
    Classify the failure: retrieval recall / reranking rank / state parsing / dialogue policy.
 
-6. **Decide** the next single change from that diagnosis. Go to 1.
+6. **Promote** the change only when train and validation both improve, then record
+   it in `results/EXPERIMENTS.md` and `results/README.md` (new id, parent id).
+
+7. **Benchmark** the final chosen variant once on test:
+   ```bash
+   python -X utf8 -m evaluator.local_evaluator --dataset data/splits/test.jsonl --output results/NNN_slug.json
+   ```
+   That test number is the reported benchmark. Do not iterate on it.
+
+8. **Decide** the next single change from the diagnosis. Go to 1.
 
 ## Rules
 
-- Keep exploratory output in `results_candidate.json`. Only regenerate `results.json`
-  with a plain `python -m evaluator.local_evaluator` when you deliberately update the
-  checked-in default.
-- Never edit `evaluator/`, `data/public_set.jsonl`, or `docs/baseline_results.json` to move a score.
-- Public results are development numbers, not private-set estimates — all 200 sessions
-  are seen during tuning. Record each pass in `documentations/EXPERIMENTS.md`.
+- Keep exploratory output in `results_candidate_*.json`. Never overwrite a
+  committed artifact in place; a new change gets a new id.
+- Never edit `evaluator/`, `data/public_set.jsonl`, the committed split files, or
+  `docs/baseline_results.json` to move a score.
+- Regenerate splits only with the fixed seed: `python -m scripts.make_splits`.
+- Public results are development numbers, not private-set estimates — the test
+  split is the reported benchmark, and the 800 private sessions are the real
+  holdout.
 
 ## Manual smoke test
 
-Role-play a shopper against a random known catalog target (describe the product in your
-own words, don't copy its title):
+Role-play a shopper against a random known catalog target (describe the product in
+your own words, don't copy its title):
 ```bash
 python -X utf8 -m scripts.chat_agent --random --seed 42
 ```
