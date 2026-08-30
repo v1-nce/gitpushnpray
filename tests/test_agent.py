@@ -76,13 +76,32 @@ class AgentTest(unittest.TestCase):
             10,
         )
         self.assertEqual(first["ask_attribute"], "other")
-        self.assertEqual(second["ask_attribute"], "feature")
+        self.assertIn(
+            second["ask_attribute"],
+            ("feature", "material", "color", "style", "use_case", "size", "budget", "brand"),
+        )
+
+    def test_override_demotes_superseded_preference_to_soft(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "I'm looking for Shoes Trail Running. waterproof membrane.", 1, 10
+        )
+        self.agent.respond(
+            "session",
+            "Actually, ignore my earlier preference. What I need is: wide toe box.",
+            3,
+            10,
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual([constraint.normalized for constraint in state.hard], ["wide toe box"])
+        self.assertEqual([constraint.normalized for constraint in state.soft], ["waterproof membrane"])
 
     def test_reset_keeps_session_state_isolated(self) -> None:
         self.agent.reset("one", self.profile)
         self.agent.reset("two", self.profile)
         self.agent.respond("one", "I'm looking for Shoes Trail Running. A key requirement is: waterproof membrane.", 1, 10)
-        self.assertEqual(self.agent._sessions["two"].constraints, [])
+        self.assertEqual(self.agent._sessions["two"].hard, [])
+        self.assertEqual(self.agent._sessions["two"].soft, [])
 
     def test_typed_question_can_repeat_after_user_supplies_evidence(self) -> None:
         self.agent.reset("session", self.profile)

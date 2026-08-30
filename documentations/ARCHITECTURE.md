@@ -26,7 +26,8 @@ the official evaluator.
 
 | Measurement | Value | Why it matters |
 |---|---|---|
-| Current agent (public) | Hit@10 `1.000`, MRR `0.699`, MTTC `2.175`, score `0.886` | Baseline |
+| Prior additive agent (public) | Hit@10 `1.000`, MRR `0.699`, MTTC `2.175`, score `0.886` | Baseline this work replaces |
+| Implemented lexicographic agent (public) | Hit@10 `1.000`, MRR `0.912`, MTTC `2.06`, score `0.952` | Live evaluator, after this implementation |
 | Targets uniquely identifiable under full evidence | **165 / 200** | The information to rank #1 is present |
 | Actually ranked #1 today | **117 / 200** | ~48 sessions are **pure ordering loss**, not retrieval loss |
 | One constraint matches | median **7,018** products | A single constraint is nearly useless alone |
@@ -298,16 +299,16 @@ The table is the source of truth for what exists today. The diagram above is the
 | Component | Status | Current behavior |
 |---|---|---|
 | Catalog preparation | Implemented | FTS5, evidence map, category membership, quality prior |
-| Session state | Implemented | Category, constraints, declined slots, question counts, prior recs |
-| Category scoping | Implemented | Evidence matched within resolved coarse category |
-| Sparse multi-route retrieval | Implemented | Current-message and accumulated-state BM25 routes |
+| Session state | Implemented | Hard/soft constraint split, demotion, declined slots, question counts, prior recs |
+| Category scoping | Implemented | Evidence matched within resolved coarse category, unscoped fallback |
+| Sparse multi-route retrieval | Implemented | Current-message and accumulated-state BM25 recall routes (zero coverage) |
 | Boundary handling | Implemented | Declined attributes retired, never re-asked |
-| Structured attribute maps | Planned | Rung 2 of the ladder |
-| Evidence resolution ladder | Planned | Currently exact-match only (rung 1) |
-| **Lexicographic ranker** | **Planned** | Currently an additive score fusion — the 48-session ordering loss |
-| **Override demotion** | **Planned** | Currently clears prior recs but never re-weights the superseded constraint |
-| Confidence-gated emission | Planned | Currently always returns `top_k` |
-| Information-gain clarifier | Partial | Broad `other` then a fixed typed sequence; not yet information gain |
+| Structured attribute maps | Implemented | material, color, size, budget, brand into `typed_members` + `prices` (rung 2) |
+| Evidence resolution ladder | Implemented | Rungs 1-3; rung 4 (BM25) is recall-only, never counts toward coverage |
+| **Lexicographic ranker** | **Implemented** | K0 coverage_hard, K1 coverage_soft, K2 match_tier, K3 quality, K4 asin |
+| **Override demotion** | **Implemented** | Superseded value moves hard to soft; replacement promoted to hard |
+| Confidence-gated emission | Implemented | Top tier only; at most 1 constraint emits a short list (1) or none (0 constraints) |
+| Information-gain clarifier | Partial | `other` first (union dominates any typed ask), then fixed typed order |
 | Evidence IDF | **Deliberately cut** | Measured at exactly zero benefit |
 | Dense / vector retrieval | **Deliberately deferred** | Coverage gap, not a similarity gap |
 | LLM parsing or reranking | **Deliberately deferred** | No model calls, tokens, credentials, network, or cost |
@@ -328,8 +329,11 @@ The table is the source of truth for what exists today. The diagram above is the
   rather than hidden; it may transfer imperfectly to differently-shaped evaluation.
 - **The clarification policy favours `other`,** which is optimal for expected
   information gain but less specific than a real shopping assistant should be.
+  A partition-entropy typed selector was measured and **reverted**: on the public
+  simulator `feature` is the evaluator's catch-all slot, so "max distinct values"
+  picked narrower slots and regressed boundary MRR `0.910` to `0.785`.
 - **Cold start rebuilds all indexes per process** (~33 s). Persistence, cold-start
   memory, and peak-memory benchmarks remain future work.
 
 Experiment history, per-change ablations, and reproduction commands:
-[`EXPERIMENTS.md`](EXPERIMENTS.md). Development loop: [`DEV.md`](../DEV.md).
+[`EXPERIMENTS.md`](../results/EXPERIMENTS.md). Development loop: [`DEV.md`](../DEV.md).

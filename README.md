@@ -97,7 +97,7 @@ sessions were inspected during development, so they are no longer an unbiased
 holdout. The simulator also returns catalog-grounded constraints close to
 verbatim, which favors the exact-evidence route. Natural paraphrases and changed
 dialogue templates remain important generalization risks. See
-`documentations/EXPERIMENTS.md` for the experiment history and limitations.
+`results/EXPERIMENTS.md` for the experiment history and limitations.
 
 ## Agent Interface
 
@@ -154,7 +154,7 @@ evaluator/local_evaluator.py      public-set simulator and scorer
 scripts/diagnose_sessions.py      public conversation replay and failure inspection
 scripts/chat_agent.py             manual role-play against a known catalog target
 tests/test_agent.py               state, evidence, and clarification tests
-documentations/EXPERIMENTS.md     public experiment history and limitations
+results/EXPERIMENTS.md           public experiment history and limitations
 ```
 
 ## Judging and Submission Policy
