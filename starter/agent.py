@@ -102,6 +102,11 @@ OVERRIDE_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 SHORT_LIST_MAX = 1
+# Longest-first search for a catalog phrase embedded in a conversational payload.
+# The token cap bounds the quadratic window scan; two tokens is the shortest phrase
+# specific enough to be worth matching.
+EMBEDDED_PHRASE_TOKEN_LIMIT = 16
+EMBEDDED_PHRASE_MIN_TOKENS = 2
 
 
 def _text(value: object) -> str:
@@ -247,6 +252,7 @@ class Agent:
         self._quality: dict[str, float] = {}
         self._searchable: dict[str, str] = {}
         self._token_cache: dict[str, frozenset[str]] = {}
+        self._exact_cache: dict[tuple[str, str | None], frozenset[str]] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -589,7 +595,11 @@ class Agent:
             params.append(limit)
         return [str(row[0]) for row in self.connection.execute(sql, params)]
 
-    def _exact_matches(self, normalized: str, category: str | None) -> set[str]:
+    def _exact_lookup(self, normalized: str, category: str | None) -> set[str]:
+        cache_key = (normalized, category)
+        cached = self._exact_cache.get(cache_key)
+        if cached is not None:
+            return set(cached)
         if category:
             rows = self.connection.execute(
                 "SELECT evidence.parent_asin FROM evidence "
@@ -603,7 +613,36 @@ class Agent:
                 "SELECT parent_asin FROM evidence WHERE normalized = ?",
                 (normalized,),
             )
-        return {str(row[0]) for row in rows}
+        found = {str(row[0]) for row in rows}
+        self._exact_cache[cache_key] = frozenset(found)
+        return found
+
+    def _embedded_phrase_matches(self, normalized: str, category: str | None) -> set[str]:
+        """Recover an exact catalog phrase wrapped in words of the customer's own.
+
+        The official simulator states a requirement as a bare catalog string, so
+        whole-payload equality resolves it at rung 1. A person who phrases the same
+        requirement themselves ("I would like 100% cotton") defeats that equality and
+        forces a fall back to typed or token matching, which matches every cotton
+        shirt rather than the few that are 100% cotton. Evidence survives but stops
+        discriminating, which is why paraphrased sessions miss on rank rather than on
+        recall.
+
+        Matching the longest catalog phrase contained in the payload restores the
+        specific evidence without inventing any: every phrase tried must already
+        exist in the catalog-derived evidence table.
+        """
+        tokens = normalized.split()[:EMBEDDED_PHRASE_TOKEN_LIMIT]
+        if len(tokens) <= EMBEDDED_PHRASE_MIN_TOKENS:
+            return set()
+        for length in range(len(tokens) - 1, EMBEDDED_PHRASE_MIN_TOKENS - 1, -1):
+            found: set[str] = set()
+            for start in range(len(tokens) - length + 1):
+                found |= self._exact_lookup(" ".join(tokens[start : start + length]), category)
+            if found:
+                return found
+        return set()
+
 
     def _typed_lookup(self, attribute: str, value: str, category: str | None) -> set[str]:
         if category:
@@ -706,12 +745,20 @@ class Agent:
     def _resolve_constraint(
         self, constraint: Constraint, category: str | None
     ) -> list[tuple[str, int]]:
-        exact = self._exact_matches(constraint.normalized, category)
+        exact = self._exact_lookup(constraint.normalized, category)
         if exact:
             return [(parent_asin, 1) for parent_asin in exact]
-        typed = self._typed_matches(constraint, category)
-        if typed:
-            return [(parent_asin, 2) for parent_asin in typed]
+        # An embedded catalog phrase is more specific evidence than a typed
+        # attribute, but it must not replace the typed route. Returning the narrow
+        # set alone drops products the customer would still accept, including the
+        # true one when the catalog words the same requirement differently. Merging
+        # both and keeping the strongest rung per product lets precision improve the
+        # ordering without ever costing recall.
+        resolved = {parent_asin: 2 for parent_asin in self._typed_matches(constraint, category)}
+        for parent_asin in self._embedded_phrase_matches(constraint.normalized, category):
+            resolved[parent_asin] = 1
+        if resolved:
+            return list(resolved.items())
         overlap = self._token_overlap_matches(constraint, category)
         if overlap:
             return [(parent_asin, 3) for parent_asin in overlap]

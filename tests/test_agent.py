@@ -167,5 +167,35 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(response["ask_attribute"], "feature")
 
 
+    def test_embedded_catalog_phrase_resolves_through_conversational_wrapping(self) -> None:
+        """A requirement wrapped in the customer's own words still matches exactly."""
+        bare = self.agent._exact_lookup("waterproof membrane", None)
+        self.assertIn("TARGET", bare)
+        # Whole-payload equality fails once the customer wraps the phrase.
+        self.assertEqual(self.agent._exact_lookup("i would like waterproof membrane", None), set())
+        # The embedded phrase is still recovered.
+        embedded = self.agent._embedded_phrase_matches("i would like waterproof membrane", None)
+        self.assertIn("TARGET", embedded)
+
+    def test_embedded_phrase_search_ignores_single_token_payloads(self) -> None:
+        self.assertEqual(self.agent._embedded_phrase_matches("waterproof", None), set())
+
+    def test_embedded_phrase_never_reduces_typed_recall(self) -> None:
+        """Merging the two routes may add candidates but must never drop one."""
+        from starter.agent import Constraint
+
+        constraint = Constraint(
+            value="I would like waterproof membrane",
+            normalized="i would like waterproof membrane",
+            kind="hard",
+            attribute="feature",
+        )
+        resolved = dict(self.agent._resolve_constraint(constraint, None))
+        typed = self.agent._typed_matches(constraint, None)
+        self.assertLessEqual(set(typed), set(resolved))
+        # The embedded match is recorded at the stronger rung.
+        self.assertEqual(resolved.get("TARGET"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
