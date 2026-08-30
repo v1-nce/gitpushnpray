@@ -15,13 +15,24 @@ policy. Read the two benchmarks together:
   organizer's phrasing differs from the shipped simulator)
 
 The gap between them is the agent's exposure to phrasing it was not tuned on.
+
+Targets are popularity-matched to the public set by default. Official targets are
+real purchase records from the Clothing 5-core split and are heavily skewed toward
+popular products: their median review count is 7078 against 12 for the catalog as a
+whole, and 30.5% of catalog products have fewer than five reviews against 1.0% of
+public targets. Sampling the catalog uniformly therefore builds a long-tail test set
+whose targets are nothing like the organizer's, and it systematically misjudges any
+ranking signal correlated with popularity. Pass --uniform-targets to reproduce the
+original uniform sampling.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
+from collections import defaultdict
 from pathlib import Path
 
 from evaluator.local_evaluator import catalog_index, evaluate, intent_card, load_jsonl
@@ -42,12 +53,18 @@ def scenario_sequence(sample_count: int, seed: int) -> list[str]:
     return scenarios
 
 
+def _popularity_bucket(review_count: int) -> int:
+    """Coarse log2 band of a product's review count."""
+    return int(math.log2(review_count)) if review_count > 0 else -1
+
+
 def select_targets(
     products: dict[str, dict],
     excluded_ids: set[str],
     sample_count: int,
     seed: int,
     require_two_constraints: bool,
+    reference_counts: list[int] | None = None,
 ) -> tuple[list[str], int]:
     pool: list[str] = []
     thin = 0
@@ -61,8 +78,46 @@ def select_targets(
         pool.append(parent_asin)
     if len(pool) < sample_count:
         raise ValueError(f"requested {sample_count} targets but only {len(pool)} qualify")
-    random.Random(seed).shuffle(pool)
-    return pool[:sample_count], thin
+
+    rng = random.Random(seed)
+    if not reference_counts:
+        rng.shuffle(pool)
+        return pool[:sample_count], thin
+
+    # Draw one unseen product per reference target from the same log2 review-count
+    # band, falling back to the nearest populated band. This reproduces the official
+    # popularity profile instead of the catalog's long tail.
+    banded: dict[int, list[str]] = defaultdict(list)
+    for parent_asin in pool:
+        banded[
+            _popularity_bucket(int(products[parent_asin].get("rating_number") or 0))
+        ].append(parent_asin)
+    for members in banded.values():
+        rng.shuffle(members)
+
+    chosen: list[str] = []
+    taken: set[str] = set()
+    references = list(reference_counts)
+    rng.shuffle(references)
+    populated = sorted(banded)
+    for review_count in references:
+        if len(chosen) >= sample_count:
+            break
+        wanted = _popularity_bucket(review_count)
+        for band in sorted(populated, key=lambda value: (abs(value - wanted), value)):
+            members = banded[band]
+            while members:
+                candidate = members.pop()
+                if candidate not in taken:
+                    taken.add(candidate)
+                    chosen.append(candidate)
+                    break
+            else:
+                continue
+            break
+    if len(chosen) < sample_count:
+        raise ValueError(f"popularity matching produced only {len(chosen)} targets")
+    return chosen, thin
 
 
 def build_samples(targets: list[str], scenarios: list[str]) -> list[dict]:
@@ -89,6 +144,14 @@ def main() -> None:
     parser.add_argument("--sample-count", type=int, default=200)
     parser.add_argument("--seed", type=int, default=20260830)
     parser.add_argument(
+        "--uniform-targets",
+        action="store_true",
+        help=(
+            "Sample targets uniformly from the catalog instead of matching the public "
+            "set's review-count profile. Reproduces the original, long-tail-biased pool."
+        ),
+    )
+    parser.add_argument(
         "--require-two-constraints",
         action="store_true",
         help="Skip catalog products whose intent card yields fewer than two hard constraints.",
@@ -104,8 +167,21 @@ def main() -> None:
         if sample.get("ground_truth")
     }
 
+    reference_counts = None
+    if not args.uniform_targets:
+        reference_counts = [
+            int(products[str(sample["ground_truth"]["parent_asin"])].get("rating_number") or 0)
+            for sample in public_samples
+            if sample.get("ground_truth")
+            and str(sample["ground_truth"]["parent_asin"]) in products
+        ]
     targets, thin = select_targets(
-        products, excluded, args.sample_count, args.seed, args.require_two_constraints
+        products,
+        excluded,
+        args.sample_count,
+        args.seed,
+        args.require_two_constraints,
+        reference_counts,
     )
     samples = build_samples(targets, scenario_sequence(args.sample_count, args.seed))
 
@@ -121,13 +197,17 @@ def main() -> None:
         "catalog_products_with_thin_constraints": thin,
         "public_target_overlap": 0,
         "dialogue_policy": "unmodified evaluator.local_evaluator",
+        "target_sampling": "uniform" if args.uniform_targets else "popularity-matched",
+        "median_target_review_count": (
+            sorted(int(products[t].get("rating_number") or 0) for t in targets)[len(targets) // 2]
+        ),
     }
     report["disclosures"] = {
         "limitations": (
             "Assumes the organizer's private harness uses the shipped dialogue policy. "
-            "Targets are sampled uniformly from the catalog, whereas official sessions "
-            "derive from the Clothing 5-core review split and may favour products with "
-            "richer metadata. Neutral user profiles are substituted."
+            "Targets are popularity-matched to the public set by review count unless "
+            "--uniform-targets is passed; uniform sampling draws a long tail unlike the "
+            "real purchase records the organizer uses. Neutral user profiles are substituted."
         )
     }
     text = json.dumps(report, indent=2)

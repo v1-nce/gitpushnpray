@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import re
 import statistics
@@ -55,8 +56,17 @@ def scenario_sequence(sample_count: int, seed: int) -> list[str]:
     return scenarios
 
 
+def _popularity_bucket(review_count: int) -> int:
+    """Coarse log2 band of a product's review count."""
+    return int(math.log2(review_count)) if review_count > 0 else -1
+
+
 def select_targets(
-    products: dict[str, dict], excluded_ids: set[str], sample_count: int, seed: int
+    products: dict[str, dict],
+    excluded_ids: set[str],
+    sample_count: int,
+    seed: int,
+    reference_counts: list[int] | None = None,
 ) -> list[dict]:
     candidates = []
     for parent_asin, product in products.items():
@@ -68,10 +78,39 @@ def select_targets(
         if not product.get("categories"):
             continue
         candidates.append(product)
-    random.Random(seed).shuffle(candidates)
     if len(candidates) < sample_count:
         raise ValueError(f"requested {sample_count} targets but only {len(candidates)} qualify")
-    return candidates[:sample_count]
+
+    rng = random.Random(seed)
+    if not reference_counts:
+        rng.shuffle(candidates)
+        return candidates[:sample_count]
+
+    # Official targets are real purchase records and skew heavily popular, with a
+    # median review count around 7000 against 12 for the catalog. Sampling the
+    # catalog uniformly builds a long-tail test set whose targets are nothing like
+    # the organizer's, and misjudges any ranking signal correlated with popularity.
+    banded: dict[int, list[dict]] = defaultdict(list)
+    for product in candidates:
+        banded[_popularity_bucket(int(product.get("rating_number") or 0))].append(product)
+    for members in banded.values():
+        rng.shuffle(members)
+
+    chosen: list[dict] = []
+    references = list(reference_counts)
+    rng.shuffle(references)
+    populated = sorted(banded)
+    for review_count in references:
+        if len(chosen) >= sample_count:
+            break
+        wanted = _popularity_bucket(review_count)
+        for band in sorted(populated, key=lambda value: (abs(value - wanted), value)):
+            if banded[band]:
+                chosen.append(banded[band].pop())
+                break
+    if len(chosen) < sample_count:
+        raise ValueError(f"popularity matching produced only {len(chosen)} targets")
+    return chosen
 
 
 def _conflicting_constraint(
@@ -139,7 +178,13 @@ def run_shadow_evaluation(
         for sample in public_samples
         if sample.get("ground_truth")
     }
-    targets = select_targets(products, excluded_ids, sample_count, seed)
+    reference_counts = [
+        int(products[str(sample["ground_truth"]["parent_asin"])].get("rating_number") or 0)
+        for sample in public_samples
+        if sample.get("ground_truth")
+        and str(sample["ground_truth"]["parent_asin"]) in products
+    ]
+    targets = select_targets(products, excluded_ids, sample_count, seed, reference_counts)
     scenarios = scenario_sequence(sample_count, seed)
     catalog_ids = set(products)
     by_category: dict[str, list[dict]] = defaultdict(list)
@@ -235,6 +280,7 @@ def run_shadow_evaluation(
             "public_target_overlap": 0,
             "contains_target_ids": False,
             "constraint_source": "target catalog metadata with deterministic surface paraphrases",
+            "target_sampling": "popularity-matched to the public set by review count",
             "limitations": "Synthetic customer policy; not an estimate of organizer private-set performance.",
         },
     }
