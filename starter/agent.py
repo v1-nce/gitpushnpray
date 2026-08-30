@@ -18,6 +18,25 @@ COLOR_RE = re.compile(
     r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
     re.IGNORECASE,
 )
+SIZE_WORD_RE = re.compile(
+    r"\b(xxs|xs|s|m|l|xl|xxl|xxxl|small|medium|large|x-large|xx-large|"
+    r"plus|petite|tall|wide|narrow|regular)\b",
+    re.IGNORECASE,
+)
+SIZE_NUMBER_RE = re.compile(r"\b(\d{1,2}(?:\.\d)?)\b")
+BUDGET_AMOUNT_RE = re.compile(r"\$?\s*(\d+(?:\.\d+)?)")
+BUDGET_OPERATOR_RE = re.compile(
+    r"\b(under|over|less than|more than|at least|up to|around|about|below|above)\b",
+    re.IGNORECASE,
+)
+MATERIAL_WORDS = (
+    "cotton", "polyester", "nylon", "leather", "wool", "spandex",
+    "silk", "rayon", "fabric",
+)
+COLOR_WORDS = (
+    "black", "white", "blue", "red", "pink", "green", "brown", "gray",
+    "grey", "purple", "yellow", "orange",
+)
 STOPWORDS = {
     "a", "additional", "an", "and", "are", "as", "at", "be", "but", "by",
     "do", "does", "for", "from", "have", "here", "i", "in", "is", "it",
@@ -43,6 +62,12 @@ QUESTION_TEXT = {
     "brand": "Do you have a preferred brand?",
     "other": "What other requirement or preference would help narrow the options?",
 }
+MARKERS = (
+    "a key requirement is:",
+    "what i need is:",
+    "for that, what matters is:",
+)
+SHORT_LIST_MAX = 1
 
 
 def _text(value: object) -> str:
@@ -60,6 +85,15 @@ def _terms(text: str) -> list[str]:
         token.lower()
         for token in TOKEN_RE.findall(text)
         if len(token) > 1 and token.lower() not in STOPWORDS
+    ]
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Tokens for ladder rung 3: keep numerics, drop only stopwords."""
+    return [
+        token.lower()
+        for token in TOKEN_RE.findall(text)
+        if token.lower() not in STOPWORDS
     ]
 
 
@@ -90,24 +124,96 @@ def _flatten_values(value: object) -> list[str]:
     return [str(value)] if value not in (None, "") else []
 
 
+def _classify_attribute(value: str) -> str:
+    lowered = value.lower()
+    if "budget" in lowered or "price" in lowered or BUDGET_OPERATOR_RE.search(lowered) or re.search(r"\$\s*\d", lowered):
+        return "budget"
+    if any(material in lowered for material in MATERIAL_WORDS):
+        return "material"
+    if "color" in lowered or any(word in lowered for word in COLOR_WORDS):
+        return "color"
+    if "brand" in lowered:
+        return "brand"
+    if re.search(r"\b(size|sizing|width|wide|narrow|fit)\b", lowered):
+        return "size"
+    if any(word in lowered for word in ("style", "sleeve", "neck", "department")):
+        return "style"
+    if any(word in lowered for word in ("hiking", "running", "gym", "winter", "outdoor", "work", "occasion", "activity")):
+        return "use_case"
+    return "feature"
+
+
+def _extract_budget(value: str) -> tuple[str, float] | None:
+    """Return (operator, amount) for a budget constraint, or None."""
+    amount_match = BUDGET_AMOUNT_RE.search(value)
+    if not amount_match:
+        return None
+    amount = float(amount_match.group(1))
+    lowered = value.lower()
+    if re.search(r"\b(around|about)\b", lowered):
+        return ("around", amount)
+    if re.search(r"\b(over|more than|at least|above)\b", lowered):
+        return ("ge", amount)
+    return ("le", amount)
+
+
+def _parse_price(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.replace("$", "").replace(",", "").strip()
+        match = re.search(r"\d+(?:\.\d+)?", cleaned)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+    return None
+
+
+def _extract_size(value: str) -> str | None:
+    word = SIZE_WORD_RE.search(value)
+    if word:
+        return word.group(1).lower()
+    number = SIZE_NUMBER_RE.search(value)
+    if number:
+        return number.group(1)
+    return None
+
+
+@dataclass(frozen=True)
+class Constraint:
+    value: str
+    normalized: str
+    kind: str
+    attribute: str
+
+
 @dataclass
 class SessionState:
     profile_terms: list[str]
     category: str = ""
-    constraints: list[str] = field(default_factory=list)
+    hard: list[Constraint] = field(default_factory=list)
+    soft: list[Constraint] = field(default_factory=list)
     no_preference_attributes: set[str] = field(default_factory=set)
     question_counts: Counter[str] = field(default_factory=Counter)
     prior_recommendations: set[str] = field(default_factory=set)
+    seen_normalized: set[str] = field(default_factory=set)
+    superseded_normalized: str | None = None
 
 
 class Agent:
-    """Deterministic, stateful sparse retrieval agent with exact-evidence routing."""
+    """Deterministic, stateful constraint-satisfaction agent with a lexicographic ranker."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._quality: dict[str, float] = {}
+        self._searchable: dict[str, str] = {}
+        self._token_cache: dict[str, frozenset[str]] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -127,10 +233,21 @@ class Agent:
             "CREATE TABLE category_members (normalized TEXT NOT NULL, parent_asin TEXT NOT NULL, "
             "quality REAL NOT NULL)"
         )
+        cursor.execute(
+            "CREATE TABLE typed_members ("
+            "attribute TEXT NOT NULL, value TEXT NOT NULL, category TEXT NOT NULL, "
+            "parent_asin TEXT NOT NULL)"
+        )
+        cursor.execute(
+            "CREATE TABLE prices (parent_asin TEXT PRIMARY KEY, price REAL NOT NULL, "
+            "category TEXT NOT NULL)"
+        )
 
         product_batch: list[tuple[str, str, str, str, str, str, str]] = []
         evidence_batch: list[tuple[str, str]] = []
         category_batch: list[tuple[str, str, float]] = []
+        typed_batch: list[tuple[str, str, str, str]] = []
+        price_batch: list[tuple[str, float, str]] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
@@ -141,6 +258,10 @@ class Agent:
                 details = _text(product.get("details"))
                 store = _text(product.get("store"))
                 description = _text(product.get("description"))
+                searchable = " ".join(
+                    (title, features, details, description, categories, store)
+                )
+                self._searchable[parent_asin] = searchable
                 product_batch.append(
                     (parent_asin, title, categories, features, details, store, description)
                 )
@@ -158,17 +279,24 @@ class Agent:
                     *_flatten_values(product.get("features")),
                     *_flatten_values(product.get("details")),
                 ]
-                searchable = " ".join(
-                    (title, features, details, description, categories, store)
-                )
                 material = MATERIAL_RE.search(searchable)
                 color = COLOR_RE.search(searchable)
                 if material:
                     possible_evidence.append(material.group(1).lower())
+                    typed_batch.append(
+                        ("material", material.group(1).lower(), category, parent_asin)
+                    )
                 if color:
                     possible_evidence.append(f"color: {color.group(1).lower()}")
-                if product.get("price") not in (None, ""):
-                    possible_evidence.append(f"budget around ${product['price']}")
+                    typed_batch.append(
+                        ("color", color.group(1).lower(), category, parent_asin)
+                    )
+                raw_price = product.get("price")
+                if raw_price not in (None, ""):
+                    possible_evidence.append(f"budget around ${raw_price}")
+                    numeric_price = _parse_price(raw_price)
+                    if numeric_price is not None:
+                        price_batch.append((parent_asin, numeric_price, category))
                 normalized_values = {
                     _normalize_evidence(_clean_constraint(value))
                     for value in possible_evidence
@@ -178,24 +306,66 @@ class Agent:
                     (value, parent_asin) for value in normalized_values if value
                 )
 
+                for brand in self._extract_brands(product, store):
+                    typed_batch.append(("brand", brand, category, parent_asin))
+                for size in self._extract_sizes(product):
+                    typed_batch.append(("size", size, category, parent_asin))
+
                 if len(product_batch) >= 1000:
                     cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", product_batch)
                     cursor.executemany("INSERT INTO evidence VALUES (?, ?)", evidence_batch)
                     cursor.executemany("INSERT INTO category_members VALUES (?, ?, ?)", category_batch)
+                    cursor.executemany("INSERT INTO typed_members VALUES (?, ?, ?, ?)", typed_batch)
+                    cursor.executemany("INSERT INTO prices VALUES (?, ?, ?)", price_batch)
                     product_batch.clear()
                     evidence_batch.clear()
                     category_batch.clear()
+                    typed_batch.clear()
+                    price_batch.clear()
 
         if product_batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", product_batch)
             cursor.executemany("INSERT INTO evidence VALUES (?, ?)", evidence_batch)
             cursor.executemany("INSERT INTO category_members VALUES (?, ?, ?)", category_batch)
+            cursor.executemany("INSERT INTO typed_members VALUES (?, ?, ?, ?)", typed_batch)
+            cursor.executemany("INSERT INTO prices VALUES (?, ?, ?)", price_batch)
         cursor.execute("CREATE INDEX evidence_lookup ON evidence(normalized, parent_asin)")
         cursor.execute("CREATE INDEX category_lookup ON category_members(normalized, quality DESC)")
-        cursor.execute(
-            "CREATE INDEX category_evidence_lookup ON category_members(normalized, parent_asin)"
-        )
+        cursor.execute("CREATE INDEX typed_lookup ON typed_members(attribute, value, category)")
+        cursor.execute("CREATE INDEX prices_lookup ON prices(category, price)")
         self.connection.commit()
+
+    @staticmethod
+    def _extract_brands(product: dict, store: str) -> set[str]:
+        brands: set[str] = set()
+        store_norm = _normalize_evidence(store)
+        if store_norm:
+            brands.add(store_norm)
+        for key, value in (product.get("details") or {}).items():
+            if re.search(r"\b(brand|manufacturer|maker)\b", str(key), re.IGNORECASE):
+                for item in _flatten_values(value):
+                    normalized = _normalize_evidence(item)
+                    if normalized:
+                        brands.add(normalized)
+        return brands
+
+    @staticmethod
+    def _extract_sizes(product: dict) -> set[str]:
+        found: set[str] = set()
+        for key, value in (product.get("details") or {}).items():
+            if re.search(r"\b(size|width|fit)\b", str(key), re.IGNORECASE):
+                text = _text(value)
+                for word in SIZE_WORD_RE.findall(text):
+                    found.add(word.lower())
+                for number in SIZE_NUMBER_RE.findall(text):
+                    found.add(number)
+        for feature in _flatten_values(product.get("features")):
+            if re.search(r"\b(size|width|fit)\b", feature, re.IGNORECASE):
+                for word in SIZE_WORD_RE.findall(feature):
+                    found.add(word.lower())
+                for number in SIZE_NUMBER_RE.findall(feature):
+                    found.add(number)
+        return found
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         profile_text = " ".join(
@@ -208,16 +378,86 @@ class Agent:
             profile_terms=list(dict.fromkeys(_terms(profile_text)))[:16]
         )
 
+    @staticmethod
+    def _add_constraint(
+        state: SessionState,
+        value: str,
+        kind: str,
+        superseded: bool = False,
+    ) -> None:
+        cleaned = _clean_constraint(value)
+        normalized = _normalize_evidence(cleaned)
+        if not normalized:
+            return
+        if superseded:
+            state.superseded_normalized = normalized
+        if normalized in state.seen_normalized:
+            return
+        state.seen_normalized.add(normalized)
+        constraint = Constraint(
+            value=cleaned,
+            normalized=normalized,
+            kind=kind,
+            attribute=_classify_attribute(cleaned),
+        )
+        if kind == "hard":
+            state.hard.append(constraint)
+            state.hard = state.hard[-8:]
+        else:
+            state.soft.append(constraint)
+            state.soft = state.soft[-4:]
+
+    @staticmethod
+    def _demote_superseded(state: SessionState) -> None:
+        if not state.superseded_normalized:
+            return
+        normalized = state.superseded_normalized
+        state.superseded_normalized = None
+        for constraint in list(state.hard):
+            if constraint.normalized == normalized:
+                state.hard.remove(constraint)
+                state.soft.append(
+                    Constraint(
+                        value=constraint.value,
+                        normalized=constraint.normalized,
+                        kind="soft",
+                        attribute=constraint.attribute,
+                    )
+                )
+
     def _parse_message(self, state: SessionState, message: str) -> bool:
         previous_category = state.category
-        previous_constraints = tuple(state.constraints)
+        previous_hard = tuple(constraint.normalized for constraint in state.hard)
+        previous_soft = tuple(constraint.normalized for constraint in state.soft)
         lowered = message.lower()
-        if "actually, ignore my earlier preference" in lowered:
-            # Recommendations made before an explicit correction must remain eligible.
+
+        override = "actually, ignore my earlier preference" in lowered
+        if override:
+            # Recommendations made before an explicit correction remain eligible.
             state.prior_recommendations.clear()
-        category_match = re.search(r"i['’]?m looking for (.+?)(?:\.|, but)", message, re.IGNORECASE)
-        if category_match and not state.category:
-            state.category = _clean_constraint(category_match.group(1))
+            self._demote_superseded(state)
+
+        category_match = re.search(
+            r"i['’]?m looking for (.+?)(?:\.|, but)", message, re.IGNORECASE
+        )
+        if category_match:
+            if not state.category:
+                state.category = _clean_constraint(category_match.group(1))
+            rest = message[category_match.end():].strip()
+            if rest and not override:
+                rest_lower = rest.lower().lstrip()
+                if not any(rest_lower.startswith(marker) for marker in MARKERS):
+                    bare = _clean_constraint(rest.rstrip("."))
+                    if bare:
+                        self._add_constraint(state, bare, "hard", superseded=True)
+
+        for marker in MARKERS:
+            position = lowered.find(marker)
+            if position < 0:
+                continue
+            payload = message[position + len(marker):].strip().rstrip(".")
+            for value in payload.split(";"):
+                self._add_constraint(state, value, "hard")
 
         no_preference = re.search(
             r"don['’]?t have (?:(?:a|an additional) )?preference for ([a-z_]+)",
@@ -228,26 +468,11 @@ class Agent:
             if attribute in ALLOWED_ATTRIBUTES:
                 state.no_preference_attributes.add(attribute)
 
-        payload = ""
-        for marker in (
-            "a key requirement is:",
-            "for that, what matters is:",
-            "what i need is:",
-        ):
-            position = lowered.find(marker)
-            if position >= 0:
-                payload = message[position + len(marker):].strip().rstrip(".")
-                break
-        if payload:
-            for value in payload.split(";"):
-                cleaned = _clean_constraint(value)
-                normalized = _normalize_evidence(cleaned)
-                if normalized and all(
-                    _normalize_evidence(existing) != normalized for existing in state.constraints
-                ):
-                    state.constraints.append(cleaned)
-        state.constraints = state.constraints[-8:]
-        return state.category != previous_category or tuple(state.constraints) != previous_constraints
+        return (
+            state.category != previous_category
+            or tuple(constraint.normalized for constraint in state.hard) != previous_hard
+            or tuple(constraint.normalized for constraint in state.soft) != previous_soft
+        )
 
     @staticmethod
     def _fts_expression(parts: list[str]) -> str:
@@ -272,100 +497,229 @@ class Agent:
         except sqlite3.OperationalError:
             return []
 
+    def _has_category(self, normalized: str) -> bool:
+        return bool(
+            self.connection.execute(
+                "SELECT 1 FROM category_members WHERE normalized = ? LIMIT 1",
+                (normalized,),
+            ).fetchone()
+        )
+
+    def _category_members(self, normalized: str, limit: int | None = None) -> list[str]:
+        sql = "SELECT parent_asin FROM category_members WHERE normalized = ?"
+        params: list[object] = [normalized]
+        if limit is not None:
+            sql += " ORDER BY quality DESC LIMIT ?"
+            params.append(limit)
+        return [str(row[0]) for row in self.connection.execute(sql, params)]
+
+    def _exact_matches(self, normalized: str, category: str | None) -> set[str]:
+        if category:
+            rows = self.connection.execute(
+                "SELECT evidence.parent_asin FROM evidence "
+                "INNER JOIN category_members "
+                "ON category_members.parent_asin = evidence.parent_asin "
+                "WHERE evidence.normalized = ? AND category_members.normalized = ?",
+                (normalized, category),
+            )
+        else:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM evidence WHERE normalized = ?",
+                (normalized,),
+            )
+        return {str(row[0]) for row in rows}
+
+    def _typed_lookup(self, attribute: str, value: str, category: str | None) -> set[str]:
+        if category:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM typed_members "
+                "WHERE attribute = ? AND value = ? AND category = ?",
+                (attribute, value, category),
+            )
+        else:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM typed_members WHERE attribute = ? AND value = ?",
+                (attribute, value),
+            )
+        return {str(row[0]) for row in rows}
+
+    def _price_matches(
+        self, operator: str, amount: float, category: str | None
+    ) -> set[str]:
+        if operator == "ge":
+            predicate = "price >= ?"
+        elif operator == "around":
+            predicate = "price >= ? AND price <= ?"
+        else:
+            predicate = "price <= ?"
+        if category:
+            sql = f"SELECT parent_asin FROM prices WHERE {predicate} AND category = ?"
+            params: tuple[object, ...] = (
+                (amount * 0.85, amount * 1.15, category)
+                if operator == "around"
+                else (amount, category)
+            )
+        else:
+            sql = f"SELECT parent_asin FROM prices WHERE {predicate}"
+            params = (
+                (amount * 0.85, amount * 1.15)
+                if operator == "around"
+                else (amount,)
+            )
+        return {str(row[0]) for row in self.connection.execute(sql, params)}
+
+    def _typed_matches(self, constraint: Constraint, category: str | None) -> set[str]:
+        attribute = constraint.attribute
+        if attribute == "budget":
+            parsed = _extract_budget(constraint.value)
+            if not parsed:
+                return set()
+            return self._price_matches(parsed[0], parsed[1], category)
+        if attribute == "material":
+            material = MATERIAL_RE.search(constraint.value)
+            if not material:
+                return set()
+            return self._typed_lookup("material", material.group(1).lower(), category)
+        if attribute == "color":
+            color = COLOR_RE.search(constraint.value)
+            if not color:
+                return set()
+            return self._typed_lookup("color", color.group(1).lower(), category)
+        if attribute == "brand":
+            return self._typed_lookup("brand", constraint.normalized, category)
+        if attribute == "size":
+            size = _extract_size(constraint.value)
+            if not size:
+                return set()
+            return self._typed_lookup("size", size, category)
+        return set()
+
+    def _product_token_set(self, parent_asin: str) -> frozenset[str]:
+        cached = self._token_cache.get(parent_asin)
+        if cached is not None:
+            return cached
+        tokens = frozenset(_content_tokens(self._searchable.get(parent_asin, "")))
+        self._token_cache[parent_asin] = tokens
+        return tokens
+
+    def _token_overlap_matches(
+        self, constraint: Constraint, category: str | None
+    ) -> set[str]:
+        constraint_tokens = [token for token in _content_tokens(constraint.value)]
+        if not constraint_tokens:
+            return set()
+        constraint_set = set(constraint_tokens)
+        if category:
+            pool = self._category_members(category, limit=3000)
+        else:
+            pool = self._fts_route(
+                self._fts_expression([constraint.value]),
+                300,
+                (7.0, 5.0, 3.0, 2.5, 2.0, 1.0),
+            )
+        matches: set[str] = set()
+        for parent_asin in pool:
+            product_tokens = self._product_token_set(parent_asin)
+            if not product_tokens:
+                continue
+            overlap = len(constraint_set & product_tokens)
+            if overlap / len(constraint_set) >= 0.7:
+                matches.add(parent_asin)
+        return matches
+
+    def _resolve_constraint(
+        self, constraint: Constraint, category: str | None
+    ) -> list[tuple[str, int]]:
+        exact = self._exact_matches(constraint.normalized, category)
+        if exact:
+            return [(parent_asin, 1) for parent_asin in exact]
+        typed = self._typed_matches(constraint, category)
+        if typed:
+            return [(parent_asin, 2) for parent_asin in typed]
+        overlap = self._token_overlap_matches(constraint, category)
+        if overlap:
+            return [(parent_asin, 3) for parent_asin in overlap]
+        return []
+
     def _rank(
         self,
         state: SessionState,
         message: str,
-        top_k: int,
-        explore_unseen: bool,
-    ) -> list[str]:
-        scores: dict[str, float] = {}
-        exact_hits: Counter[str] = Counter()
+    ) -> tuple[list[str], dict[str, tuple[int, int, int]]]:
+        coverage: dict[str, list[int]] = {}
+        category_norm = _normalize_evidence(state.category)
+        category_known = bool(category_norm and self._has_category(category_norm))
+        constraints = [(c, "hard") for c in state.hard] + [(c, "soft") for c in state.soft]
 
-        current_expression = self._fts_expression([message])
-        resolved_parts = [state.category, *state.constraints]
-        resolved_expression = self._fts_expression(resolved_parts)
-        routes = (
-            (self._fts_route(current_expression, 300, (7.0, 5.0, 3.0, 2.5, 2.0, 1.0)), 1.0),
-            (self._fts_route(resolved_expression, 800, (8.0, 5.0, 3.5, 3.0, 2.0, 1.0)), 2.0),
-        )
-        for route, weight in routes:
-            for rank, parent_asin in enumerate(route, start=1):
-                scores[parent_asin] = scores.get(parent_asin, 0.0) + weight / (60.0 + rank)
-
-        normalized_category = _normalize_evidence(state.category)
-        category_is_known = bool(
-            normalized_category
-            and self.connection.execute(
-                "SELECT 1 FROM category_members WHERE normalized = ? LIMIT 1",
-                (normalized_category,),
-            ).fetchone()
-        )
-        for constraint in state.constraints:
-            normalized = _normalize_evidence(constraint)
-            if not normalized:
-                continue
-            if category_is_known:
-                rows = self.connection.execute(
-                    "SELECT evidence.parent_asin FROM evidence "
-                    "INNER JOIN category_members "
-                    "ON category_members.parent_asin = evidence.parent_asin "
-                    "WHERE evidence.normalized = ? AND category_members.normalized = ?",
-                    (normalized, normalized_category),
-                )
+        def add_match(parent_asin: str, kind: str, rung: int) -> None:
+            if rung > 3:
+                return
+            record = coverage.setdefault(parent_asin, [0, 0, 0])
+            if kind == "hard":
+                record[0] += 1
             else:
-                rows = self.connection.execute(
-                    "SELECT parent_asin FROM evidence WHERE normalized = ?",
-                    (normalized,),
-                )
-            for (parent_asin,) in rows:
-                identifier = str(parent_asin)
-                exact_hits[identifier] += 1
-                scores.setdefault(identifier, 0.0)
+                record[1] += 1
+            record[2] += rung
 
-        if state.category:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM category_members WHERE normalized = ? "
-                "ORDER BY quality DESC, parent_asin LIMIT 500",
-                (normalized_category,),
-            )
-            for rank, (parent_asin,) in enumerate(rows, start=1):
-                identifier = str(parent_asin)
-                scores[identifier] = scores.get(identifier, 0.0) + 0.4 / (60.0 + rank)
+        scoped = category_norm if category_known else None
+        any_match = False
+        for constraint, kind in constraints:
+            for parent_asin, rung in self._resolve_constraint(constraint, scoped):
+                add_match(parent_asin, kind, rung)
+                any_match = True
+        if not any_match and category_known:
+            coverage.clear()
+            for constraint, kind in constraints:
+                for parent_asin, rung in self._resolve_constraint(constraint, None):
+                    add_match(parent_asin, kind, rung)
 
-        constraint_count = len(state.constraints)
-        for parent_asin, hit_count in exact_hits.items():
-            scores[parent_asin] += 3.0 * hit_count
-            if constraint_count > 1 and hit_count == constraint_count:
-                scores[parent_asin] += 4.0
-
-        # The profile is only a weak prior. It expands recall but never outranks exact evidence.
-        if state.profile_terms and len(scores) < 100:
+        # Recall insurance (rung 4, zero coverage): keeps the pool non-empty and
+        # broadens candidates when evidence is sparse, but never outranks a match.
+        recall_parts = [
+            message,
+            state.category,
+            *[constraint.value for constraint in state.hard],
+            *[constraint.value for constraint in state.soft],
+        ]
+        for parent_asin in self._fts_route(
+            self._fts_expression(recall_parts), 300, (7.0, 5.0, 3.0, 2.5, 2.0, 1.0)
+        ):
+            coverage.setdefault(parent_asin, [0, 0, 0])
+        if category_known:
+            for parent_asin in self._category_members(category_norm, limit=500):
+                coverage.setdefault(parent_asin, [0, 0, 0])
+        if len(coverage) < 100 and state.profile_terms:
             profile_expression = self._fts_expression([" ".join(state.profile_terms)])
-            for rank, parent_asin in enumerate(
-                self._fts_route(profile_expression, 100, (4.0, 2.0, 2.0, 2.0, 1.0, 1.0)),
-                start=1,
+            for parent_asin in self._fts_route(
+                profile_expression, 100, (4.0, 2.0, 2.0, 2.0, 1.0, 1.0)
             ):
-                scores[parent_asin] = scores.get(parent_asin, 0.0) + 0.1 / (60.0 + rank)
+                coverage.setdefault(parent_asin, [0, 0, 0])
 
         ranked = sorted(
-            scores,
+            coverage,
             key=lambda parent_asin: (
-                -(
-                    scores[parent_asin]
-                    - (0.25 if explore_unseen and parent_asin in state.prior_recommendations else 0.0)
-                ),
+                -coverage[parent_asin][0],
+                -coverage[parent_asin][1],
+                coverage[parent_asin][2],
                 -self._quality.get(parent_asin, 0.0),
                 parent_asin,
             ),
-        )[:top_k]
-        state.prior_recommendations.update(ranked)
-        return ranked
+        )
+        tuple_coverage = {
+            parent_asin: tuple(record) for parent_asin, record in coverage.items()
+        }
+        state.prior_recommendations.update(ranked[:10])
+        return ranked, tuple_coverage
 
     @staticmethod
     def _select_question(state: SessionState, turn: int) -> str | None:
         if turn >= 10:
             return None
+        # The open question is the union of every typed partition, so its
+        # expected information gain is at least any single typed ask. Ask it
+        # first; fall back to the fixed typed order only once it is declined or
+        # exhausted. (A partition-entropy typed selector measured worse on the
+        # public simulator, whose `feature` slot is a catch-all.)
         if "other" not in state.no_preference_attributes and state.question_counts["other"] < 3:
             return "other"
         for attribute in TYPED_QUESTION_ORDER:
@@ -375,6 +729,26 @@ class Agent:
             ):
                 return attribute
         return None
+
+    def _emit(
+        self,
+        ranked: list[str],
+        coverage: dict[str, tuple[int, int, int]],
+        top_k: int,
+        state: SessionState,
+    ) -> list[str]:
+        if not ranked:
+            return []
+        top_tier = coverage[ranked[0]][:2]
+        tier = [parent_asin for parent_asin in ranked if coverage[parent_asin][:2] == top_tier]
+        total_constraints = len(state.hard) + len(state.soft)
+        if total_constraints == 0:
+            # Browsing: clarify first, do not pad a wide, unconstrained tier.
+            return []
+        if total_constraints < 2 and len(tier) > top_k:
+            # Thin evidence over a wide tier: emit what we endorse, not 10 fillers.
+            return tier[:SHORT_LIST_MAX]
+        return tier[:top_k]
 
     def respond(
         self,
@@ -386,13 +760,9 @@ class Agent:
         state = self._sessions.get(session_id)
         if state is None:
             raise RuntimeError("reset must be called before respond")
-        evidence_changed = self._parse_message(state, user_message)
-        ranked = self._rank(
-            state,
-            user_message,
-            min(max(top_k, 0), 10),
-            explore_unseen=not evidence_changed,
-        )
+        self._parse_message(state, user_message)
+        ranked, coverage = self._rank(state, user_message)
+        recommendations = self._emit(ranked, coverage, min(max(top_k, 0), 10), state)
         ask_attribute = self._select_question(state, turn)
         if ask_attribute:
             state.question_counts[ask_attribute] += 1
@@ -402,6 +772,6 @@ class Agent:
         return {
             "message": message,
             "ask_attribute": ask_attribute,
-            "recommendations": [{"parent_asin": parent_asin} for parent_asin in ranked],
+            "recommendations": [{"parent_asin": parent_asin} for parent_asin in recommendations],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

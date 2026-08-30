@@ -19,19 +19,25 @@ be treated as development data rather than an untouched holdout.
 
 ## Results
 
-| Version | Main change | Hit Rate@10 | MRR | MTTC | TechnicalScore |
-|---|---|---:|---:|---:|---:|
-| Released baseline | Stateless single-query BM25 | 0.125 | 0.068034 | 9.810 | 0.106710 |
-| Stateful evidence V1 | Accumulated state, exact evidence, multi-route sparse retrieval | 0.950 | 0.663776 | 2.595 | 0.842233 |
-| Parser and exploration | Correct no-preference parsing and unseen-candidate exploration | 0.955 | 0.657484 | 2.585 | 0.843045 |
-| Category-scoped evidence | Prevent generic attributes from dominating across categories | 0.995 | 0.694296 | 2.205 | 0.881689 |
-| Current | Repeat a productive typed clarification once | **1.000** | **0.699296** | **2.175** | **0.886289** |
+| Version | Main change | Hit Rate@10 | MRR | MTTC | TechnicalScore | Artifact |
+|---|---|---:|---:|---:|---:|---|
+| Released baseline | Stateless single-query BM25 | 0.125 | 0.068034 | 9.810 | 0.106710 | [000](../docs/baseline_results.json) |
+| Stateful evidence V1 | Accumulated state, exact evidence, multi-route sparse retrieval | 0.950 | 0.663776 | 2.595 | 0.842233 | — |
+| Parser and exploration | Correct no-preference parsing and unseen-candidate exploration | 0.955 | 0.657484 | 2.585 | 0.843045 | — |
+| Category-scoped evidence | Prevent generic attributes from dominating across categories | 0.995 | 0.694296 | 2.205 | 0.881689 | — |
+| Current | Repeat a productive typed clarification once | **1.000** | **0.699296** | **2.175** | **0.886289** | [001](001_stateful_hybrid.json) |
+| Lexicographic V1 | Coverage-lattice ranker, hard/soft demotion, evidence ladder, confidence gate | **1.000** | **0.912048** | **2.06** | **0.952414** | [002](002_lexicographic_v1.json) |
 
 Current scenario Hit Rate@10 is 1.0 for Buying, Browsing, Intent Override, and
 Boundary. The complete output was byte-identical across two clean evaluator
 processes (SHA-256 `7A3A43BF490FE4D985C11747A2B5F4BEC6058D84BCB429B46720A088574EC05D`).
 One complete run took approximately 33.2 seconds including index construction
-and all conversations. Seven focused unit tests pass.
+and all conversations. Eight focused unit tests pass.
+
+Raw evaluator outputs are stored in this folder (`results/`) and named
+`NNN_slug.json`; the convention and lineage rules are documented in
+[`README.md`](README.md). The table above links each retained experiment to its
+artifact.
 
 ## What produced the gain
 
@@ -65,10 +71,27 @@ and all conversations. Seven focused unit tests pass.
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m evaluator.local_evaluator
+python3 -X utf8 -m evaluator.local_evaluator --output results/NNN_slug.json
 python3 -X utf8 -m scripts.diagnose_sessions public_0001 --top-n 10
 python3 -X utf8 -m scripts.chat_agent --random --seed 42
 ```
+
+## Recording experiments
+
+Write each evaluator run to `results/NNN_slug.json` rather than the default
+root `results.json` (see [`README.md`](README.md)), then append one linked row
+to the table above **and** the same pointer row to the lineage table in
+[`README.md`](README.md). Retained artifacts are the authoritative record; the
+table here is the human-readable index.
+
+## Reverted experiments (lineage dead ends)
+
+- **Partition-entropy typed clarifier** (parent 002, reverted): chose the typed
+  attribute with the most distinct values over the current tier. On the public
+  simulator `feature` is the evaluator's catch-all slot, so it picked narrower
+  slots and regressed boundary MRR `0.910` to `0.785` (overall score `0.952` to
+  `0.949`). Reverted to `other`-first then fixed typed order; no artifact
+  retained.
 
 ## Next experiments
 
