@@ -1,0 +1,42 @@
+{
+  "benchmark": "catalog-disjoint-paraphrase-v1",
+  "seed": 20260830,
+  "sample_count": 200,
+  "hit_rate_at_10": 0.79,
+  "mrr": 0.519052,
+  "mttc": 4.16,
+  "efficiency": 0.684,
+  "technical_score": 0.687516,
+  "scenario_metrics": {
+    "buying": {
+      "sample_count": 80,
+      "hit_rate_at_10": 0.75,
+      "mrr": 0.495134,
+      "mttc": 4.1125
+    },
+    "browsing": {
+      "sample_count": 80,
+      "hit_rate_at_10": 0.8,
+      "mrr": 0.53255,
+      "mttc": 3.95
+    },
+    "intent_override": {
+      "sample_count": 30,
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.595648,
+      "mttc": 4.0
+    },
+    "boundary": {
+      "sample_count": 10,
+      "hit_rate_at_10": 0.7,
+      "mrr": 0.372619,
+      "mttc": 6.7
+    }
+  },
+  "disclosures": {
+    "public_target_overlap": 0,
+    "contains_target_ids": false,
+    "constraint_source": "target catalog metadata with deterministic surface paraphrases",
+    "limitations": "Synthetic customer policy; not an estimate of organizer private-set performance."
+  }
+}

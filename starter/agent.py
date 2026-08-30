@@ -40,7 +40,7 @@ COLOR_WORDS = (
 STOPWORDS = {
     "a", "additional", "an", "and", "are", "as", "at", "be", "but", "by",
     "do", "does", "for", "from", "have", "here", "i", "in", "is", "it",
-    "judgment", "looking", "matter", "matters", "me", "my", "need", "of",
+    "judgment", "like", "looking", "matter", "matters", "me", "my", "need", "of",
     "on", "or", "please", "preference", "requirement", "some", "still", "that",
     "the", "this", "those", "to", "use", "want", "what", "with", "would", "you",
 }
@@ -62,10 +62,44 @@ QUESTION_TEXT = {
     "brand": "Do you have a preferred brand?",
     "other": "What other requirement or preference would help narrow the options?",
 }
-MARKERS = (
-    "a key requirement is:",
-    "what i need is:",
-    "for that, what matters is:",
+CONSTRAINT_MARKER_RE = re.compile(
+    r"(?:a key requirement is|what i need is|for that, what matters is|"
+    r"it (?:must|needs to) (?:have|be)|i (?:care about|need it to have)|"
+    r"please prioritize|instead(?:,)? i need)\s*:?\s*(.+)",
+    re.IGNORECASE,
+)
+CATEGORY_PATTERNS = (
+    re.compile(
+        r"\bi['’]?m looking for\s+(.+?)(?=\.|,|;|\?|\s+(?:but|and)\b|$)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:please\s+)?help me find\s+(?:a |an |some )?(.+?)"
+        r"(?=\.|,|;|\?|\s+(?:that|with|but|and)\b|$)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:could you\s+)?show me\s+(?:a |an |some )?(.+?)"
+        r"(?=\.|,|;|\?|\s+(?:that|with|but|and)\b|$)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:i need|i['’]?m shopping for|find me)\s+(?:a |an |some )?(.+?)"
+        r"(?=\.|,|;|\?|\s+(?:that|with|but|and)\b|$)",
+        re.IGNORECASE,
+    ),
+)
+ERASE_OVERRIDE_RE = re.compile(
+    r"\b(?:scratch|forget|remove|drop)\b|\b(?:don['’]?t|do not|no longer) want\b",
+    re.IGNORECASE,
+)
+DEMOTE_OVERRIDE_RE = re.compile(
+    r"\b(?:ignore my earlier preference|matters? less|less important|deprioriti[sz]e)\b",
+    re.IGNORECASE,
+)
+OVERRIDE_CUE_RE = re.compile(
+    r"\b(?:actually|instead|scratch|forget|changed my mind|no longer|rather)\b",
+    re.IGNORECASE,
 )
 SHORT_LIST_MAX = 1
 
@@ -199,7 +233,6 @@ class SessionState:
     soft: list[Constraint] = field(default_factory=list)
     no_preference_attributes: set[str] = field(default_factory=set)
     question_counts: Counter[str] = field(default_factory=Counter)
-    prior_recommendations: set[str] = field(default_factory=set)
     seen_normalized: set[str] = field(default_factory=set)
     superseded_normalized: str | None = None
 
@@ -425,42 +458,85 @@ class Agent:
                     )
                 )
 
+    @staticmethod
+    def _erase_superseded(state: SessionState) -> None:
+        """Remove an explicitly retracted constraint from active evidence."""
+        normalized = state.superseded_normalized
+        if not normalized:
+            return
+        state.superseded_normalized = None
+        state.hard = [item for item in state.hard if item.normalized != normalized]
+        state.soft = [item for item in state.soft if item.normalized != normalized]
+
+    def _extract_category(self, message: str) -> str | None:
+        for pattern in CATEGORY_PATTERNS:
+            match = pattern.search(message)
+            if not match:
+                continue
+            candidate = _clean_constraint(match.group(1))
+            if not candidate:
+                continue
+            normalized = _normalize_evidence(candidate)
+            if self._has_category(normalized):
+                return candidate
+        return None
+
+    @staticmethod
+    def _constraint_payloads(message: str) -> list[str]:
+        """Extract explicit requirement clauses without treating small talk as evidence."""
+        payloads: list[str] = []
+        for match in CONSTRAINT_MARKER_RE.finditer(message):
+            payload = match.group(1)
+            payload = re.sub(
+                r"\s+(?:instead|but|however)\b.*$", "", payload, flags=re.IGNORECASE
+            )
+            cleaned = _clean_constraint(payload)
+            if cleaned:
+                payloads.extend(
+                    value
+                    for value in (_clean_constraint(item) for item in cleaned.split(";"))
+                    if value
+                )
+        return list(dict.fromkeys(payloads))
+
     def _parse_message(self, state: SessionState, message: str) -> bool:
         previous_category = state.category
         previous_hard = tuple(constraint.normalized for constraint in state.hard)
         previous_soft = tuple(constraint.normalized for constraint in state.soft)
         lowered = message.lower()
 
-        override = "actually, ignore my earlier preference" in lowered
-        if override:
-            # Recommendations made before an explicit correction remain eligible.
-            state.prior_recommendations.clear()
+        is_override = bool(OVERRIDE_CUE_RE.search(message))
+        if is_override and ERASE_OVERRIDE_RE.search(message):
+            self._erase_superseded(state)
+        elif is_override and DEMOTE_OVERRIDE_RE.search(message):
+            # A reprioritization retains useful evidence at lower strength. This
+            # also preserves the official simulator's "ignore earlier" policy.
             self._demote_superseded(state)
 
-        category_match = re.search(
-            r"i['’]?m looking for (.+?)(?:\.|, but)", message, re.IGNORECASE
-        )
-        if category_match:
-            if not state.category:
-                state.category = _clean_constraint(category_match.group(1))
-            rest = message[category_match.end():].strip()
-            if rest and not override:
-                rest_lower = rest.lower().lstrip()
-                if not any(rest_lower.startswith(marker) for marker in MARKERS):
-                    bare = _clean_constraint(rest.rstrip("."))
-                    if bare:
-                        self._add_constraint(state, bare, "hard", superseded=True)
+        category = self._extract_category(message)
+        if category:
+            state.category = category
 
-        for marker in MARKERS:
-            position = lowered.find(marker)
-            if position < 0:
-                continue
-            payload = message[position + len(marker):].strip().rstrip(".")
-            for value in payload.split(";"):
-                self._add_constraint(state, value, "hard")
+        payloads = self._constraint_payloads(message)
+        for payload in payloads:
+            self._add_constraint(state, payload, "hard")
+
+        # The official override scenario introduces its initial preference as a
+        # bare sentence after the category. Preserve that protocol while keeping
+        # exploratory phrases out of the constraint set.
+        if category and not payloads and not is_override:
+            category_end = lowered.find(category.lower()) + len(category)
+            rest = _clean_constraint(message[category_end:].lstrip(" .,:;-"))
+            if rest and not re.search(
+                r"\b(?:still exploring|open to ideas|just browsing|not sure yet)\b",
+                rest,
+                re.IGNORECASE,
+            ):
+                self._add_constraint(state, rest, "hard", superseded=True)
 
         no_preference = re.search(
-            r"don['’]?t have (?:(?:a|an additional) )?preference for ([a-z_]+)",
+            r"(?:don['’]?t have|do not have|(?:i have )?no) (?:(?:a|an additional|any) )?"
+            r"preference (?:for|about) ([a-z_]+)",
             lowered,
         )
         if no_preference:
@@ -708,7 +784,6 @@ class Agent:
         tuple_coverage = {
             parent_asin: tuple(record) for parent_asin, record in coverage.items()
         }
-        state.prior_recommendations.update(ranked[:10])
         return ranked, tuple_coverage
 
     @staticmethod

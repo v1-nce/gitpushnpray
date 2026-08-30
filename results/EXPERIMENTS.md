@@ -28,6 +28,23 @@ be treated as development data rather than an untouched holdout.
 | Current | Repeat a productive typed clarification once | **1.000** | **0.699296** | **2.175** | **0.886289** | [001](001_stateful_hybrid.json) |
 | Lexicographic V1 | Coverage-lattice ranker, hard/soft demotion, evidence ladder, confidence gate | **1.000** | **0.912048** | **2.06** | **0.952414** | [002](002_lexicographic_v1.json) |
 
+### Catalog-disjoint robustness benchmark
+
+The synthetic shadow benchmark is deliberately reported separately from the official
+public evaluator. It excludes every public target product, keeps the official scenario
+mix, varies dialogue wrappers, uses deterministic surface paraphrases, and includes
+conflicting overrides that require true erasure.
+
+| Version | Targets | Hit Rate@10 | MRR | MTTC | TechnicalScore | Artifact |
+|---|---:|---:|---:|---:|---:|---|
+| Paraphrase V1, initial wrapper tokens | 200 | 0.735 | 0.499442 | 4.590 | 0.645533 | scratch run |
+| Paraphrase V1, conversational wrapper stopword | 200 | **0.790** | **0.519052** | **4.160** | **0.687516** | [003](003_shadow_paraphrase_v1.json) |
+
+The single measured change treats the wrapper word `like` as dialogue rather than
+product evidence. The +0.055 Hit Rate gain illustrates why parser/retrieval evaluation
+must extend beyond copied catalog strings. This benchmark is synthetic and is not a
+claim about organizer-private performance.
+
 Current scenario Hit Rate@10 is 1.0 for Buying, Browsing, Intent Override, and
 Boundary. The complete output was byte-identical across two clean evaluator
 processes (SHA-256 `7A3A43BF490FE4D985C11747A2B5F4BEC6058D84BCB429B46720A088574EC05D`).
@@ -97,7 +114,8 @@ table here is the human-readable index.
 
 1. Generate protocol-compatible sessions for catalog targets outside the 200
    public targets to test unseen-product transfer.
-2. Add a paraphrase stress set and measure the drop from exact catalog wording.
+2. Expand the paraphrase benchmark with independently authored semantic rewrites,
+   negative constraints, and category overrides.
 3. Accumulate materials, colors, brands, sizes, budgets, negations, and
    corrections from arbitrary customer sentences rather than fixed templates.
 4. Compare the fixed question policy with category-grounded candidate entropy
