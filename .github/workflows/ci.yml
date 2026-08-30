@@ -22,3 +22,10 @@ jobs:
 
       - name: Run public evaluator (smoke)
         run: python -X utf8 -m evaluator.local_evaluator --output /tmp/ci_results.json
+
+      - name: Run catalog-disjoint paraphrase benchmark (smoke)
+        run: >-
+          python -X utf8 -m scripts.shadow_evaluator
+          --sample-count 20
+          --seed 42
+          --output /tmp/ci_shadow_results.json

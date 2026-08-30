@@ -96,6 +96,50 @@ class AgentTest(unittest.TestCase):
         self.assertEqual([constraint.normalized for constraint in state.hard], ["wide toe box"])
         self.assertEqual([constraint.normalized for constraint in state.soft], ["waterproof membrane"])
 
+    def test_explicit_retraction_erases_superseded_constraint(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "I need Shoes Trail Running. breathable mesh.", 1, 10
+        )
+        self.agent.respond(
+            "session",
+            "Scratch that earlier requirement; I no longer want it. Instead I need: wide toe box.",
+            3,
+            10,
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual([constraint.normalized for constraint in state.hard], ["wide toe box"])
+        self.assertEqual(state.soft, [])
+
+    def test_paraphrased_category_and_requirement_are_understood(self) -> None:
+        self.agent.reset("session", self.profile)
+        response = self.agent.respond(
+            "session",
+            "Please help me find some Shoes Trail Running. It must have a waterproof membrane.",
+            1,
+            10,
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.category, "Shoes Trail Running")
+        self.assertEqual([constraint.normalized for constraint in state.hard], ["a waterproof membrane"])
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "TARGET")
+
+    def test_paraphrased_browsing_message_does_not_become_constraint(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "Could you show me some Shoes Trail Running? I'm open to ideas.", 1, 10
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.category, "Shoes Trail Running")
+        self.assertEqual(state.hard, [])
+
+    def test_paraphrased_no_preference_retires_attribute(self) -> None:
+        self.agent.reset("session", self.profile)
+        self.agent.respond(
+            "session", "I have no preference about color; choose what works.", 2, 10
+        )
+        self.assertIn("color", self.agent._sessions["session"].no_preference_attributes)
+
     def test_reset_keeps_session_state_isolated(self) -> None:
         self.agent.reset("one", self.profile)
         self.agent.reset("two", self.profile)

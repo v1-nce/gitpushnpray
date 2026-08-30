@@ -33,7 +33,8 @@ the official evaluator.
 | One constraint matches | median **7,018** products | A single constraint is nearly useless alone |
 | All hard constraints intersected | median **24** | **Conjunction is the discriminative engine** |
 | Uniqueness on random catalog products | **83.7%** (vs 82.5% public) | The structure is a property of the *catalog*, not the sample |
-| Lexicographic ranker, unseen products | MRR `0.907`, rank-1 `0.874`, hit@10 `0.964` | Generalises; but Hit@10 is **not** 1.000 off the public set |
+| Historical full-evidence simulation, unseen products | MRR `0.907`, rank-1 `0.874`, hit@10 `0.964` | Isolates ranker behavior after all constraints are known |
+| Reproducible shadow dialogue benchmark, 200 unseen targets | MRR `0.519`, hit@10 `0.790`, MTTC `4.16` | Exposes parser, dialogue, and paraphrase losses hidden by full-evidence tests |
 | Browsing turn 1 | **0 constraints**, median pool 173 | Turn-1 browsing hits are near-impossible |
 | Constraints per session | exactly **4**, `other` yields ≤2/turn | Full disclosure lands turn ~2–3; MTTC 2.175 is near its floor |
 
@@ -176,10 +177,11 @@ Re-framed as an **MRR instrument, not an MTTC instrument**: each constraint shri
 tie-set, and tie-set size determines rank. MTTC headroom is only +0.017 and largely
 unreachable; the rank effect is roughly 5x larger.
 
-Select the attribute minimising **expected residual tie-set size** over the current tier
-(typically ≤ 24 candidates — exact computation, no model, no latency). Attributes on
-which every tier member agrees have zero information gain and are never asked; a fixed
-question order asks them anyway and wastes turns.
+The implemented policy asks `other` first, then falls back to a bounded typed order
+after the open slot is declined or exhausted. This matches the public protocol's broad
+`other` response while keeping repeated questions bounded. A candidate-tier selector
+that minimises **expected residual tie-set size** remains a measured next step, not an
+implemented claim.
 
 On asking `other`: it is the *union* of all typed partitions, so its expected yield is
 ≥ any single typed ask for **any** customer model — a property of open questions, not a
@@ -238,7 +240,7 @@ flowchart TB
         P1["category · constraints · no-preference · correction"]
     end
 
-    STATE[("2. Session state — bounded, isolated<br/>hard constraints · soft constraints<br/>declined slots · asked slots · prior recs")]
+    STATE[("2. Session state — bounded, isolated<br/>hard constraints · soft constraints<br/>declined slots · asked slots")]
     PARSE --> STATE
     STATE -.->|prior state| PARSE
 
@@ -270,7 +272,7 @@ flowchart TB
     GATE["7. Confidence gate<br/>emit top tier only · length ∝ evidence<br/>never below tier-max coverage"]
     RANK --> GATE
 
-    ASK["8. Information-gain clarifier<br/>argmin expected residual tier size"]
+    ASK["8. Bounded clarifier<br/>open question, then typed fallback"]
     RANK --> ASK
     STATE -.->|declined / asked slots| ASK
 
@@ -299,7 +301,7 @@ The table is the source of truth for what exists today. The diagram above is the
 | Component | Status | Current behavior |
 |---|---|---|
 | Catalog preparation | Implemented | FTS5, evidence map, category membership, quality prior |
-| Session state | Implemented | Hard/soft constraint split, demotion, declined slots, question counts, prior recs |
+| Session state | Implemented | Hard/soft constraint split, demotion/erasure, declined slots, question counts |
 | Category scoping | Implemented | Evidence matched within resolved coarse category, unscoped fallback |
 | Sparse multi-route retrieval | Implemented | Current-message and accumulated-state BM25 recall routes (zero coverage) |
 | Boundary handling | Implemented | Declined attributes retired, never re-asked |
@@ -308,7 +310,8 @@ The table is the source of truth for what exists today. The diagram above is the
 | **Lexicographic ranker** | **Implemented** | K0 coverage_hard, K1 coverage_soft, K2 match_tier, K3 quality, K4 asin |
 | **Override demotion** | **Implemented** | Superseded value moves hard to soft; replacement promoted to hard |
 | Confidence-gated emission | Implemented | Top tier only; at most 1 constraint emits a short list (1) or none (0 constraints) |
-| Information-gain clarifier | Partial | `other` first (union dominates any typed ask), then fixed typed order |
+| Candidate-tier information gain | Planned | Current policy uses `other` first, then a bounded fixed typed order |
+| Shadow robustness benchmark | Implemented | Public-target exclusion, paraphrased dialogue, conflicting overrides, aggregate-only output |
 | Evidence IDF | **Deliberately cut** | Measured at exactly zero benefit |
 | Dense / vector retrieval | **Deliberately deferred** | Coverage gap, not a similarity gap |
 | LLM parsing or reranking | **Deliberately deferred** | No model calls, tokens, credentials, network, or cost |
@@ -322,9 +325,9 @@ The table is the source of truth for what exists today. The diagram above is the
   (`0.964`) is a better estimate, and is still our own harness, not the official
   evaluator on private data.
 - **Exact-string matching is brittle by construction.** The simulator discloses catalog
-  strings close to verbatim, which flatters rung 1. Rungs 2–4 exist specifically to
-  degrade gracefully; they must be validated against a **paraphrase stress set**, not
-  the public set.
+  strings close to verbatim, which flatters rung 1. The checked-in paraphrase benchmark
+  drops Hit@10 from public `1.000` to shadow `0.790`, confirming that rungs 2–4 and the
+  parser still leave meaningful generalization headroom.
 - **The confidence gate is calibrated against a known scoring rule.** Documented above
   rather than hidden; it may transfer imperfectly to differently-shaped evaluation.
 - **The clarification policy favours `other`,** which is optimal for expected

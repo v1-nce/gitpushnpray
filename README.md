@@ -27,9 +27,8 @@ The repository now contains a deterministic, offline shopping agent rather than
 the original stateless baseline. It builds in-memory SQLite FTS5, exact-evidence,
 and category indexes once at startup. During a session it accumulates category
 and constraint evidence, combines current-turn and resolved-state sparse routes,
-reranks category-scoped evidence matches, avoids repeatedly returning the same
-failed candidates, and asks follow-up questions while respecting corrections and
-no-preference replies.
+reranks category-scoped evidence matches, and asks follow-up questions while
+distinguishing preference reprioritization from explicit retraction.
 
 No LLM, external API, credential, network connection, or third-party Python
 package is required. See `documentations/ARCHITECTURE.md` for implemented versus
@@ -64,6 +63,19 @@ Run the test suite:
 python3 -m unittest discover -s tests -v
 ```
 
+Run the deterministic catalog-disjoint paraphrase benchmark:
+
+```bash
+python3 -m scripts.shadow_evaluator \
+  --sample-count 200 \
+  --seed 20260830 \
+  --output results_shadow.json
+```
+
+The shadow benchmark excludes all public target products, varies customer phrasing,
+and publishes aggregate metrics without target IDs. It is a synthetic robustness
+check, not an estimate of the organizer's private-set score.
+
 Replay public evaluator conversations with product titles and target ranks:
 
 ```bash
@@ -85,12 +97,12 @@ instead of copying its title or feature text.
 | Agent | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|
 | Released weak BM25 baseline | 0.125 | 0.068034 | 9.81 | 0.119 | 0.106710 |
-| Current deterministic agent | **1.000** | **0.699296** | **2.175** | **0.8825** | **0.886289** |
+| Current deterministic agent | **1.000** | **0.912048** | **2.060** | **0.894** | **0.952414** |
 
 The current result was reproduced byte-for-byte in two clean evaluator processes.
-Seven focused unit tests pass. One complete run took approximately 33.2 seconds
-on the development Windows machine, including index construction and all 200
-sessions.
+Fourteen focused unit tests pass. A clean public run took approximately 14 seconds
+on the latest development machine, including index construction and all 200 sessions;
+runtime is hardware-dependent.
 
 These are public-development results, not private-set results. All 200 public
 sessions were inspected during development, so they are no longer an unbiased
@@ -98,6 +110,18 @@ holdout. The simulator also returns catalog-grounded constraints close to
 verbatim, which favors the exact-evidence route. Natural paraphrases and changed
 dialogue templates remain important generalization risks. See
 `results/EXPERIMENTS.md` for the experiment history and limitations.
+
+## Catalog-Disjoint Robustness Result
+
+| Benchmark | Targets | Hit Rate@10 | MRR | MTTC | TechnicalScore |
+|---|---:|---:|---:|---:|---:|
+| Paraphrase V1, seed `20260830` | 200 | **0.790** | **0.519052** | **4.160** | **0.687516** |
+
+This intentionally harder benchmark selects products outside the public target set,
+uses deterministic surface paraphrases, includes genuinely conflicting overrides,
+and preserves the official 40/40/15/5 scenario mix. Its lower score is evidence that
+public-set saturation does not imply private-set saturation. See
+[`003_shadow_paraphrase_v1.json`](results/003_shadow_paraphrase_v1.json).
 
 ## Agent Interface
 
@@ -153,17 +177,16 @@ starter/agent.py                  current deterministic hybrid agent
 evaluator/local_evaluator.py      public-set simulator and scorer
 scripts/diagnose_sessions.py      public conversation replay and failure inspection
 scripts/chat_agent.py             manual role-play against a known catalog target
+scripts/shadow_evaluator.py       catalog-disjoint paraphrase robustness benchmark
 tests/test_agent.py               state, evidence, and clarification tests
 results/EXPERIMENTS.md           public experiment history and limitations
 ```
 
 ## Judging and Submission Policy
 
-- Participant submission requirements: `docs/submission_rules.md`
-- Participant release checklist: `docs/participant_release_checklist.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
+- Participant submission requirements: [`docs/submission_rules.md`](docs/submission_rules.md)
+- Submission report: [`docs/SUBMISSION_REPORT.md`](docs/SUBMISSION_REPORT.md)
+- Participant release checklist: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
 
 ## Data Source
 
