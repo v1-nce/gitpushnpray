@@ -11,7 +11,9 @@ The agent builds in-memory SQLite FTS5, category, exact-evidence, typed-attribut
 price indexes over the frozen 50,000-product catalog. Per-session state tracks hard and
 soft constraints, declined attributes, question counts, and explicit preference
 replacement. Ranking is lexicographic by hard coverage, soft coverage, evidence rung,
-quality prior, and stable product ID.
+quality prior, and stable product ID. When a requirement arrives wrapped in the
+customer's own words, the longest catalog phrase inside it is matched and merged with
+the typed route, so specific evidence improves ordering without ever costing recall.
 
 ## Tools and dependencies
 
@@ -22,15 +24,23 @@ quality prior, and stable product ID.
 
 ## Results
 
-| Evaluation | Sessions | Hit Rate@10 | MRR | MTTC | TechnicalScore |
-|---|---:|---:|---:|---:|---:|
-| Official public development set | 200 | 1.000 | 0.912048 | 2.060 | 0.952414 |
-| Catalog-disjoint paraphrase V1 | 200 | 0.790 | 0.519052 | 4.160 | 0.687516 |
+| Evaluation | Sessions | Targets | Wording | Hit Rate@10 | MRR | MTTC | TechnicalScore |
+|---|---:|---|---|---:|---:|---:|---:|
+| Official public development set | 200 | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
+| Unseen targets, official wording | 200 | unseen | official | 0.965 | 0.760861 | 2.520 | 0.880358 |
+| Catalog-disjoint paraphrase V1 | 200 | unseen | rewritten | 0.890 | 0.649177 | 3.255 | 0.794653 |
 
 The public set was repeatedly used during development and is not an unbiased holdout.
-The synthetic shadow benchmark excludes public target products, changes customer
-phrasing, and includes genuine conflicting overrides. It is a robustness diagnostic,
-not an estimate of organizer-private performance.
+The two catalog-disjoint benchmarks differ in exactly one variable, which separates the
+causes of the drop: unseen target products cost 0.068, and unfamiliar wording costs a
+further 0.086. The wording penalty was 0.192 before the agent learned to match catalog
+phrases embedded in a customer's own wrapping.
+
+The unseen-target benchmark is the closer private-set proxy, since it drives the
+unmodified official dialogue policy against products excluded from the public set;
+three seeds span 0.880 to 0.895. It assumes the organizer's private harness uses that
+same policy. The paraphrase benchmark bounds the case where it does not. Neither is a
+guarantee of organizer-private performance.
 
 ## Cost, tokens, latency, and fallback
 
@@ -38,17 +48,30 @@ not an estimate of organizer-private performance.
 - Prompt and completion tokens: zero
 - Network requirement: none
 - Offline fallback: the primary implementation is already offline
-- Clean public evaluation: approximately 14 seconds on the latest development machine,
-  including index construction and all 200 sessions
 
-Cold-start peak memory and per-response p50/p95 latency must be captured on the final
-submission machine before Devpost submission; the release checklist keeps this open.
+Measured by `scripts.benchmark_runtime` on the development machine (Python 3.14.0,
+Windows), artifact [`results/004_runtime_v1.json`](../results/004_runtime_v1.json):
+
+| Quantity | Value |
+|---|---:|
+| Cold start (catalog load + index build), once per process | 20.2-25.7 s |
+| Agent resident memory after build | ~301 MB |
+| Per-response latency p50 | 26-64 ms |
+| Per-response latency p95 | 73-204 ms |
+| Per-response latency max | 136-445 ms |
+| Full clean public evaluation, index build plus 200 sessions | 40.9 s |
+
+Latency ranges span three runs and vary with machine load; memory and cold start are
+stable across runs. About 220 MB of the resident footprint is SQLite's in-memory FTS5
+index, which `tracemalloc` does not observe. These figures should be re-measured on the
+final submission machine, which the release checklist tracks.
 
 ## Reproduction
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -X utf8 -m evaluator.local_evaluator --output results_public.json
+python3 -X utf8 -m scripts.unseen_target_evaluator --output results_unseen.json
 python3 -X utf8 -m scripts.shadow_evaluator \
   --sample-count 200 \
   --seed 20260830 \
@@ -65,7 +88,8 @@ python3 -X utf8 -m scripts.shadow_evaluator \
   fallback; candidate-tier information gain remains future work.
 - Category and constraint parsing is rule-based. New dialogue styles can still evade
   the patterns, although the shadow benchmark and paraphrase tests reduce this risk.
-- Indexes are rebuilt for each process rather than persisted.
+- Indexes are rebuilt for each process rather than persisted, which costs 20-25 s of
+  cold start and ~301 MB of resident memory in every scoring process.
 
 ## Team contributions
 

@@ -27,6 +27,10 @@ are the data.
 | 001 | stateful_hybrid | 000 | [`001_stateful_hybrid.json`](001_stateful_hybrid.json) | Accumulated state, exact evidence, multi-route sparse retrieval |
 | 002 | lexicographic_v1 | 001 | [`002_lexicographic_v1.json`](002_lexicographic_v1.json) | Constraint-lattice ranker, hard/soft demotion, evidence ladder, confidence gate |
 | 003 | shadow_paraphrase_v1 | 002 | [`003_shadow_paraphrase_v1.json`](003_shadow_paraphrase_v1.json) | Catalog-disjoint dialogue benchmark plus parser wrapper normalization |
+| 004 | runtime_v1 | 003 | [`004_runtime_v1.json`](004_runtime_v1.json) | Cold-start, memory, and per-response latency measurement; no agent change |
+| 005 | unseen_official_v1 | 004 | [`005_unseen_official_v1.json`](005_unseen_official_v1.json) | Official dialogue policy on catalog-disjoint targets; isolates unseen products from paraphrasing. No agent change |
+| 006 | embedded_phrase_v1 | 005 | [`006_embedded_phrase_v1.json`](006_embedded_phrase_v1.json) | Match the longest catalog phrase embedded in a payload, merged with the typed route (public run) |
+| 007 | embedded_phrase_shadow | 006 | [`007_embedded_phrase_shadow.json`](007_embedded_phrase_shadow.json) | Same change measured on the paraphrase benchmark |
 
 ## How to record a new experiment
 
@@ -36,6 +40,10 @@ are the data.
    python -X utf8 -m evaluator.local_evaluator --output results/NNN_slug.json
    # or
    python -X utf8 -m scripts.shadow_evaluator --output results/NNN_slug.json
+   # or, for the private-set proxy at official wording
+   python -X utf8 -m scripts.unseen_target_evaluator --output results/NNN_slug.json
+   # or, for a runtime and memory measurement rather than a score
+   python -X utf8 -m scripts.benchmark_runtime --output results/NNN_slug.json
    ```
 3. Append exactly one pointer row to the lineage table in this README **and** to
    the table in [`EXPERIMENTS.md`](EXPERIMENTS.md) — id, slug, parent id,
