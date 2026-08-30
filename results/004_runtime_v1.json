@@ -1,0 +1,31 @@
+{
+  "benchmark": "runtime-v1",
+  "python_version": "3.14.0",
+  "platform": "win32",
+  "harness_rss_mb": 212.5,
+  "cold_start": {
+    "index_build_seconds": 24.858,
+    "index_build_timing_valid": true,
+    "python_heap_peak_mb": null,
+    "python_heap_retained_mb": null,
+    "process_rss_mb": 514.3,
+    "process_rss_delta_mb": 301.8,
+    "agent_rss_delta_mb": 301.8
+  },
+  "steady_state": {
+    "sessions": 200,
+    "responses": 412,
+    "turns_per_session_mean": 2.06,
+    "wall_clock_seconds": 31.148,
+    "latency_ms": {
+      "mean": 75.251,
+      "p50": 62.352,
+      "p90": 146.129,
+      "p95": 192.242,
+      "p99": 290.767,
+      "max": 321.943
+    },
+    "process_rss_peak_mb": 546.7
+  },
+  "notes": "process_rss includes SQLite C allocations that tracemalloc omits. harness_rss_mb is the simulator's own catalog copy, which the organizer harness pays for instead; agent_rss_delta_mb is the agent's own footprint. Latency excludes the one-time cold start. Values are hardware-dependent."
+}

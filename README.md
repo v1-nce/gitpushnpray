@@ -97,12 +97,12 @@ instead of copying its title or feature text.
 | Agent | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|
 | Released weak BM25 baseline | 0.125 | 0.068034 | 9.81 | 0.119 | 0.106710 |
-| Current deterministic agent | **1.000** | **0.912048** | **2.060** | **0.894** | **0.952414** |
+| Current deterministic agent | **1.000** | **0.899409** | **2.070** | **0.893** | **0.948423** |
 
 The current result was reproduced byte-for-byte in two clean evaluator processes.
-Fourteen focused unit tests pass. A clean public run took approximately 14 seconds
-on the latest development machine, including index construction and all 200 sessions;
-runtime is hardware-dependent.
+Twenty-three focused unit tests pass. A clean public run took approximately 41 seconds on
+the development machine, including index construction and all 200 sessions; runtime is
+hardware-dependent.
 
 These are public-development results, not private-set results. All 200 public
 sessions were inspected during development, so they are no longer an unbiased
@@ -111,17 +111,35 @@ verbatim, which favors the exact-evidence route. Natural paraphrases and changed
 dialogue templates remain important generalization risks. See
 `results/EXPERIMENTS.md` for the experiment history and limitations.
 
-## Catalog-Disjoint Robustness Result
+## Generalization Results
 
-| Benchmark | Targets | Hit Rate@10 | MRR | MTTC | TechnicalScore |
-|---|---:|---:|---:|---:|---:|
-| Paraphrase V1, seed `20260830` | 200 | **0.790** | **0.519052** | **4.160** | **0.687516** |
+Because the public set is saturated and was fully inspected during development, two
+catalog-disjoint benchmarks estimate transfer to unseen products. They differ in one
+variable so the causes can be told apart.
 
-This intentionally harder benchmark selects products outside the public target set,
-uses deterministic surface paraphrases, includes genuinely conflicting overrides,
-and preserves the official 40/40/15/5 scenario mix. Its lower score is evidence that
-public-set saturation does not imply private-set saturation. See
+| Benchmark | Targets | Wording | Hit Rate@10 | MRR | MTTC | TechnicalScore |
+|---|---|---|---:|---:|---:|---:|
+| Official public set | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
+| Unseen targets, seed `20260830` | unseen | official | 0.965 | 0.760861 | 2.520 | **0.880358** |
+| Paraphrase V1, seed `20260830` | unseen | rewritten | 0.890 | 0.649177 | 3.255 | 0.794653 |
+
+Unseen target products cost 0.068; unfamiliar wording costs a further 0.086. Matching
+catalog phrases embedded in conversational wrapping closed roughly half of the wording
+gap, which was 0.192 before that change. Three seeds of the unseen-target benchmark
+span 0.880 to 0.895.
+
+Read together: if the organizer's private harness uses the dialogue policy shipped in
+`evaluator/local_evaluator.py`, the expected private score is near **0.88**. If their
+phrasing differs from those templates, the paraphrase figure is the better guide. See
+[`005_unseen_official_v1.json`](results/005_unseen_official_v1.json) and
 [`003_shadow_paraphrase_v1.json`](results/003_shadow_paraphrase_v1.json).
+
+Run them with:
+
+```bash
+python3 -m scripts.unseen_target_evaluator --sample-count 200 --seed 20260830
+python3 -m scripts.shadow_evaluator --sample-count 200 --seed 20260830
+```
 
 ## Agent Interface
 
@@ -165,6 +183,15 @@ zero model tokens and has no API cost or network dependency. Dense retrieval and
 LLM reranking are intentionally deferred until an offline experiment demonstrates
 a reproducible gain that justifies their latency, memory, and cost.
 
+Measured runtime cost, from [`results/004_runtime_v1.json`](results/004_runtime_v1.json):
+a 20-25 second one-time cold start to build the indexes, about 301 MB resident memory,
+and 26-64 ms median per-response latency (p95 73-204 ms) across three runs. Reproduce
+with:
+
+```bash
+python3 -X utf8 -m scripts.benchmark_runtime --output results/NNN_slug.json
+```
+
 ## Files
 
 ```text
@@ -178,6 +205,8 @@ evaluator/local_evaluator.py      public-set simulator and scorer
 scripts/diagnose_sessions.py      public conversation replay and failure inspection
 scripts/chat_agent.py             manual role-play against a known catalog target
 scripts/shadow_evaluator.py       catalog-disjoint paraphrase robustness benchmark
+scripts/unseen_target_evaluator.py official-wording unseen-target private-set proxy
+scripts/benchmark_runtime.py      cold-start, memory, and per-response latency benchmark
 tests/test_agent.py               state, evidence, and clarification tests
 results/EXPERIMENTS.md           public experiment history and limitations
 ```

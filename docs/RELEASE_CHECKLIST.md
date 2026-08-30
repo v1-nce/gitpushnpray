@@ -7,8 +7,11 @@
 - [x] Unit tests pass from a clean checkout with the documented command.
 - [x] The official public evaluator result is reproducible.
 - [x] The catalog-disjoint shadow benchmark uses a fixed seed and emits no target IDs.
-- [ ] Verify the catalog checksum on the final submission machine.
-- [ ] Measure cold-start peak memory and per-response p50/p95 latency.
+- [ ] Verify the catalog checksum on the final submission machine. Verify the
+  downloaded `catalog.jsonl.gz` against `SHA256SUMS` *before* decompressing; the
+  decompressed file cannot be checked against that digest (see `data/README.md`).
+- [x] Measure cold-start peak memory and per-response p50/p95 latency
+  ([`results/004_runtime_v1.json`](../results/004_runtime_v1.json)).
 - [ ] Test the exact archive or repository commit submitted to Devpost.
 
 ## Documentation and disclosure
