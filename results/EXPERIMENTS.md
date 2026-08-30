@@ -208,6 +208,35 @@ table here is the human-readable index.
 
 ## Reverted experiments (lineage dead ends)
 
+- **Tier-splitting clarification** (parent 006, reverted): kept the `other`-first
+  ask, then chose the typed fallback attribute whose values partition the currently
+  tied top group most evenly, by entropy over per-product indexed values. Intended to
+  supply the one thing a tie needs and reweighting cannot give it: a fact the customer
+  has not stated.
+
+  | Benchmark | Parent | Tier-splitting |
+  |---|---:|---:|
+  | Public | 0.948423 | 0.946623 |
+  | Unseen targets | 0.880358 | 0.880544 |
+  | Paraphrase shadow | 0.794653 | 0.788366 |
+
+  The targeted effect appeared and was too small to pay for itself. Unseen-target MRR
+  rose `0.760861` to `0.764813`, but MTTC worsened on all three benchmarks (2.07 to
+  2.16, 2.52 to 2.57, 3.255 to 3.41) and the net was negative twice.
+
+  The cause is a property of the simulator rather than of the idea. A question's value
+  here is dominated by how much evidence the answer carries, not by how well the
+  attribute divides the tier. `other` is answered with up to two constraints of any
+  type, while a typed question returns only constraints of that type and otherwise
+  spends the turn on "no preference". Choosing an attribute for its split power
+  therefore often selects one the customer has nothing to say about, and the turn is
+  wasted.
+
+  This is the second information-gain question selector to fail for the same reason,
+  after the partition-entropy clarifier below. Treat the pairing of `other`-first with
+  a fixed typed fallback as the measured local optimum for this dialogue policy, and
+  attack the MRR ceiling from the ranking side instead. No artifact retained.
+
 - **Constraint specificity weighting / IDF** (parent 006, reverted): weighted each
   satisfied requirement by its rarity, `log(catalog_size / (1 + match_count))`,
   accumulated per product and inserted as a tie-break between the evidence rung and
@@ -246,11 +275,18 @@ table here is the human-readable index.
 4. Compare the fixed question policy with category-grounded candidate entropy
    or expected information gain.
 5. Improve ordering among products that share all disclosed evidence, targeting
-   MRR without sacrificing Hit Rate or MTTC. Constraint rarity has been tried and
-   cannot help here (see the reverted IDF experiment): products in a tie satisfy
-   the identical requirement set and therefore carry identical weight. A useful
-   attempt must introduce evidence the agent does not yet hold, such as asking a
-   question chosen to split the current tier rather than to fill an unfilled slot.
+   MRR without sacrificing Hit Rate or MTTC. Two approaches are now excluded.
+   Reweighting the evidence cannot work (reverted IDF experiment): tied products
+   satisfy the identical requirement set and carry identical weight. Acquiring
+   more evidence by question selection cannot pay for itself either (reverted
+   tier-splitting experiment): the turn it costs exceeds the rank it buys.
+   What remains untried is a discriminator computed from the product itself
+   rather than from the constraints, since tied products differ in their catalog
+   text even when their satisfied-requirement sets are identical. The candidate
+   is coverage precision: prefer the product whose description is most fully
+   explained by the disclosed evidence, rather than the most popular one, so a
+   narrowly matching product outranks a broad one that happens to satisfy the
+   same requirements incidentally.
 6. Reduce the 20-25 s cold start and ~301 MB resident footprint, most plausibly by
    persisting the SQLite index instead of rebuilding it per process, before any
    embedding or LLM reranker adds to either budget.
