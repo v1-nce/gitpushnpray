@@ -2,7 +2,8 @@
 
 _TikTok TechJam 2026 · Source: https://bytedance.larkoffice.com/wiki/DNtSwxgeciCS2nkiUefc5qqtnkf_
 
-> Technical Workshop Webinar with Q&A will be held on 28 Aug, 4:00 to 4:45pm. Click here to join the webinar!
+> Technical Workshop Webinar with Q&A was held on 28 Aug, 4:00 to 4:45pm.
+> Webinar Recording: #4 Shopping Copilot: AI Conversational Search and Recommendations.mp4
 
 ## 4.1 Background
 

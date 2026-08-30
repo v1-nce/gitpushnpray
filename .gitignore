@@ -25,3 +25,7 @@ tests/test_organizer_pipeline.py
 # Local agent instructions.
 AGENTS.md
 CLAUDE.md
+
+# Local dev notes.
+DEV.md
+MINIMAL_ARCHITECTURE.md
