@@ -89,6 +89,41 @@ Two consequences for how these benchmarks are read:
    whose target distribution is known to be correct. Treat a large public regression as
    evidence against a change even when the generalization benchmarks approve of it.
 
+### Emit fill when clarification is exhausted (adopted)
+
+The `_emit` gate returned only the single top coverage tier (`tier[:top_k]`). When
+paraphrasing coarsens evidence, the true product can fall into a lower coverage tier
+and be dropped from the emitted list even though it sits inside the top ten of the
+full ranking. Diagnosis on seed `20260830` found 7 of 11 paraphrase misses in exactly
+this state (full-pool rank 3-9), and 26 further hits ranked below a more popular
+same-tier product.
+
+The change fills the list to `top_k` from the full ranking **only when no productive
+clarification question remains** (`ask_attribute is None`). Filling on every turn traded
+MRR for efficiency by hitting early at a worse rank and regressed unseen-target MRR; the
+question-gated variant preserves the wait-for-rank-one behaviour on early turns while
+still recovering the lower-tier targets once evidence is complete.
+
+| Benchmark | Parent (009) | Emit fill (012) |
+|---|---:|---:|
+| Public | 0.948423 | 0.948423 |
+| Unseen targets, official wording | 0.944868 | 0.944868 |
+| Paraphrased wording | 0.895854 | **0.916125** |
+
+Public and unseen are byte-identical; the paraphrase benchmark gains Hit Rate@10
+`0.945` to `0.980`, MRR `0.848512` to `0.855415`, and MTTC `2.560` to `2.525`.
+The question-gated variant, not an unconditional fill, is the one retained.
+
+The gated fill is monotone rather than tuned: it fires only when no question
+remains, and then it either reproduces the old tier slice (top tier already fills
+`top_k`) or appends strictly lower-tier candidates that sit after every product
+already endorsed. A lower-tier target can only move from a miss to a hit; a target
+already in the top tier keeps its rank. The unseen-target sealed seeds confirm the
+no-op there (`31337` 0.918981 and `987654` 0.942379, byte-identical to the parent),
+and the paraphrase sealed seeds give 0.890856 (`31337`) and 0.913401 (`987654`)
+against 0.916125 for the tuning seed `20260830`, the same mild highest-tuning-seed
+pattern already noted for the unseen benchmark.
+
 ### Sealed-seed check on the unseen-target benchmark
 
 The agent has no fitted parameters, so the unseen-target benchmark cannot be
@@ -225,6 +260,13 @@ values. The retained artifact [004](004_runtime_v1.json) records the most conser
 run. `tracemalloc` roughly triples the measured index-build time, so heap tracing is
 opt-in behind `--trace-heap` and the script marks such a run's timing invalid.
 
+After index persistence was added (see the emit-fill section's parent, ids 010-012), two
+fresh runs on Python 3.13.5 record both paths: [013](013_runtime_cold_index_cache.json)
+builds cold in 11.7 s and [014](014_runtime_warm_index_cache.json) restores the
+snapshot in 0.34 s. Steady-state p50/p95 latency is 29.7/84.7 ms cold and
+19.2/57.1 ms warm; the agent's own RSS delta is ~289-302 MB. The cold figure is lower
+than 004's 20-25 s because of the newer Python, not a code change.
+
 The full-run figure supersedes an earlier claim of approximately 14 seconds, which no
 measurement on this machine reproduces.
 
@@ -314,6 +356,24 @@ table here is the human-readable index.
   it, where it could order products that popularity leaves tied without discarding a
   signal that demonstrably works. No artifact retained.
 
+- **Constraint containment tie-break** (parent 010, reverted): per-product mean
+  fraction of each disclosed requirement's content tokens covered by the product's own
+  text, inserted between the evidence rung and the quality prior. The intent was to
+  separate products satisfying the same typed attribute once paraphrasing coarsens the
+  evidence.
+
+  | Benchmark | Parent (010) | Containment |
+  |---|---:|---:|
+  | Public | 0.948423 | 0.945118 |
+  | Unseen targets, official wording | 0.944868 | 0.940704 |
+  | Paraphrase shadow | 0.916125 | 0.879174 |
+
+  Regressed all three. A measurement over the paraphrase benchmark showed containment
+  strictly favours the target in only 9 of 38 sub-rank-1 hits; in the rest the target
+  and the products above it share the same containment value, so the signal cannot
+  order them. Reordered everywhere else instead, demoting correct rank-one answers.
+  Reverted; the lexicographic quality prior stays.
+
 - **Tier-splitting clarification** (parent 006, reverted): kept the `other`-first
   ask, then chose the typed fallback attribute whose values partition the currently
   tied top group most evenly, by entropy over per-product indexed values. Intended to
@@ -391,8 +451,16 @@ table here is the human-readable index.
    tier-splitting experiment): the turn it costs exceeds the rank it buys.
    Coverage precision, the per-product discriminator, has now been tried as a
    replacement for the popularity prior and rejected: popularity is real signal for
-   targets that are real purchase records. It remains untried as a tie-break placed
-   after the quality prior instead of before it.
+   targets that are real purchase records. Its closer relative, per-product
+   constraint containment placed between the evidence rung and the quality prior,
+   was then measured and rejected too: public `0.945118`, unseen `0.940704`, shadow
+   `0.879174`, all regressions. A diagnostic found exact quality ties in only 2 of
+   ~31 sub-rank-1 hits, so a literal post-quality tie-break has almost nothing left
+   to order; the popularity prior remains the measured local optimum here.
 6. Reduce the 20-25 s cold start and ~301 MB resident footprint, most plausibly by
    persisting the SQLite index instead of rebuilding it per process, before any
-   embedding or LLM reranker adds to either budget.
+   embedding or LLM reranker adds to either budget. **Done**: the in-memory index
+   is snapshotted to a derived `*.index.db` after the first build and restored on
+   warm start (0.44 s warm vs 11.0 s cold on the development machine, score-
+   equivalent). The cache is regenerated automatically when the catalog file
+   changes, so it never needs to be committed or seeded.

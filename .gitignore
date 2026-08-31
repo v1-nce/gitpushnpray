@@ -6,6 +6,10 @@ __pycache__/
 results.json
 data/releases/
 
+# Derived, reproducible catalog index cache (built on first run).
+*.index.db
+*.index.db.tmp
+
 # Organizer-only code, private evaluation data, manifests, and build reports.
 organizer/
 secure/

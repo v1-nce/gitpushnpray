@@ -33,6 +33,11 @@ are the data.
 | 007 | embedded_phrase_shadow | 006 | [`007_embedded_phrase_shadow.json`](007_embedded_phrase_shadow.json) | Same change measured on the paraphrase benchmark |
 | 008 | unseen_popularity_matched | 007 | [`008_unseen_popularity_matched.json`](008_unseen_popularity_matched.json) | Unseen-target benchmark with targets popularity-matched to the public set. Supersedes 005. No agent change |
 | 009 | shadow_popularity_matched | 008 | [`009_shadow_popularity_matched.json`](009_shadow_popularity_matched.json) | Paraphrase benchmark with the same sampling correction. Supersedes 003 and 007. No agent change |
+| 010 | emit_fill_public | 009 | [`010_emit_fill_public.json`](010_emit_fill_public.json) | Fill Top-10 from the full ranking once no clarification question remains (public run) |
+| 011 | emit_fill_unseen | 010 | [`011_emit_fill_unseen.json`](011_emit_fill_unseen.json) | Same change measured on the unseen-target official-wording benchmark |
+| 012 | emit_fill_shadow | 011 | [`012_emit_fill_shadow.json`](012_emit_fill_shadow.json) | Same change measured on the paraphrase benchmark; Hit 0.945->0.980, shadow 0.916125 |
+| 013 | runtime_cold_index_cache | 012 | [`013_runtime_cold_index_cache.json`](013_runtime_cold_index_cache.json) | Cold build plus steady-state latency with the persisted-index code path (first run) |
+| 014 | runtime_warm_index_cache | 013 | [`014_runtime_warm_index_cache.json`](014_runtime_warm_index_cache.json) | Warm restore plus steady-state latency; construction 0.34 s vs 11.7 s cold |
 
 ## How to record a new experiment
 

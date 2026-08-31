@@ -28,12 +28,12 @@ the typed route, so specific evidence improves ordering without ever costing rec
 |---|---:|---|---|---:|---:|---:|---:|
 | Official public development set | 200 | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
 | Unseen targets, official wording | 200 | unseen | official | 0.995 | 0.899560 | 2.125 | 0.944868 |
-| Catalog-disjoint paraphrase V1 | 200 | unseen | rewritten | 0.945 | 0.848512 | 2.560 | 0.895854 |
+| Catalog-disjoint paraphrase V1 | 200 | unseen | rewritten | 0.980 | 0.855415 | 2.525 | 0.916125 |
 
 The public set was repeatedly used during development and is not an unbiased holdout.
 The two catalog-disjoint benchmarks differ in exactly one variable, which separates the
 causes of the drop: unseen target products cost 0.004, and unfamiliar wording costs a
-further 0.049.
+further 0.029.
 
 Both catalog-disjoint benchmarks popularity-match their targets to the public set.
 Official targets are real purchase records with a median of 7078 reviews against 12 for
@@ -62,22 +62,24 @@ bounds. Neither is a guarantee of organizer-private performance.
 - Network requirement: none
 - Offline fallback: the primary implementation is already offline
 
-Measured by `scripts.benchmark_runtime` on the development machine (Python 3.14.0,
-Windows), artifact [`results/004_runtime_v1.json`](../results/004_runtime_v1.json):
+Measured by `scripts.benchmark_runtime` on the development machine (Python 3.13.5,
+Windows). The in-memory index is snapshotted to a derived `*.index.db` on the first
+build and restored on later starts; both paths are recorded:
 
-| Quantity | Value |
-|---|---:|
-| Cold start (catalog load + index build), once per process | 20.2-25.7 s |
-| Agent resident memory after build | ~301 MB |
-| Per-response latency p50 | 26-64 ms |
-| Per-response latency p95 | 73-204 ms |
-| Per-response latency max | 136-445 ms |
-| Full clean public evaluation, index build plus 200 sessions | 40.9 s |
+| Quantity | Cold build (013) | Warm start (014) |
+|---|---:|---:|
+| Agent construction (build / restore) | 11.7 s | 0.34 s |
+| Agent resident memory delta after build | 302 MB | 289 MB |
+| Per-response latency p50 | 29.7 ms | 19.2 ms |
+| Per-response latency p95 | 84.7 ms | 57.1 ms |
+| Per-response latency max | 224 ms | 187 ms |
+| Steady-state wall clock, 200 sessions | 14.8 s | 10.1 s |
 
-Latency ranges span three runs and vary with machine load; memory and cold start are
-stable across runs. About 220 MB of the resident footprint is SQLite's in-memory FTS5
-index, which `tracemalloc` does not observe. These figures should be re-measured on the
-final submission machine, which the release checklist tracks.
+`process_rss` includes SQLite C allocations that `tracemalloc` omits; the agent's own
+footprint is the delta over the harness (~211 MB). Values are hardware-dependent and
+should be re-measured on the final submission machine. The earlier
+[`004_runtime_v1.json`](../results/004_runtime_v1.json) on Python 3.14.0 reported a
+20-25 s cold build, so the cold figure above is not a universal bound.
 
 ## Reproduction
 
@@ -91,6 +93,10 @@ python3 -X utf8 -m scripts.shadow_evaluator \
   --output results_shadow.json
 ```
 
+The agent derives a catalog index cache (`data/catalog.jsonl.index.db`) on its first
+run and rebuilds it automatically whenever the catalog file changes; no cache file
+needs to be committed.
+
 ## Limitations
 
 - Public messages expose catalog-grounded strings close to verbatim, making the public
@@ -101,8 +107,9 @@ python3 -X utf8 -m scripts.shadow_evaluator \
   fallback; candidate-tier information gain remains future work.
 - Category and constraint parsing is rule-based. New dialogue styles can still evade
   the patterns, although the shadow benchmark and paraphrase tests reduce this risk.
-- Indexes are rebuilt for each process rather than persisted, which costs 20-25 s of
-  cold start and ~301 MB of resident memory in every scoring process.
+- Indexes are built once per catalog and then restored from a derived `*.index.db`
+  cache; the cold build costs 20-25 s only on the first run or after the catalog
+  changes, and warm start is ~0.4 s.
 
 ## Team contributions
 

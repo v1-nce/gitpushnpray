@@ -196,6 +196,49 @@ class AgentTest(unittest.TestCase):
         # The embedded match is recorded at the stronger rung.
         self.assertEqual(resolved.get("TARGET"), 1)
 
+    def test_emit_fills_full_ranking_only_once_no_question_remains(self) -> None:
+        """A pending question keeps the conservative tier slice; exhaustion fills."""
+        from starter.agent import Constraint, SessionState
+
+        state = SessionState(
+            profile_terms=[],
+            hard=[
+                Constraint(
+                    value="cotton",
+                    normalized="cotton",
+                    kind="hard",
+                    attribute="material",
+                )
+            ],
+        )
+        ranked = ["TARGET", "OTHER"]
+        coverage = {"TARGET": (1, 0, 2), "OTHER": (0, 0, 0)}
+        # While a clarification is pending, only the single top coverage tier is
+        # endorsed so an early wide list cannot trade MRR for efficiency.
+        self.assertEqual(
+            self.agent._emit(ranked, coverage, 10, state, pending_question=True),
+            ["TARGET"],
+        )
+        # Once no productive question remains, fill from the full ranking.
+        self.assertEqual(
+            self.agent._emit(ranked, coverage, 10, state, pending_question=False),
+            ["TARGET", "OTHER"],
+        )
+
+    def test_index_cache_round_trip_reproduces_runtime_dicts(self) -> None:
+        """A warm start restores the same quality and searchable dictionaries."""
+        index_path = Path(self.temporary_directory.name) / "cache.index.db"
+        first = Agent(self.agent.catalog_path, index_path=index_path)
+        expected_quality = dict(first._quality)
+        expected_searchable = dict(first._searchable)
+        first.connection.close()
+        second = Agent(self.agent.catalog_path, index_path=index_path)
+        try:
+            self.assertEqual(second._quality, expected_quality)
+            self.assertEqual(second._searchable, expected_searchable)
+        finally:
+            second.connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()

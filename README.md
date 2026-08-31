@@ -121,7 +121,7 @@ variable so the causes can be told apart.
 |---|---|---|---:|---:|---:|---:|
 | Official public set | seen | official | 1.000 | 0.899409 | 2.070 | 0.948423 |
 | Unseen targets, seed `20260830` | unseen | official | 0.995 | 0.899560 | 2.125 | **0.944868** |
-| Paraphrase V1, seed `20260830` | unseen | rewritten | 0.945 | 0.848512 | 2.560 | 0.895854 |
+| Paraphrase V1, seed `20260830` | unseen | rewritten | 0.980 | 0.855415 | 2.525 | 0.916125 |
 
 Both benchmarks draw one unseen product per public target from the same review-count
 band. This matters more than it sounds: official targets are real purchase records with
@@ -130,7 +130,7 @@ uniformly builds a long-tail test set the organizer would never present. Earlier
 revisions of this table used uniform sampling and understated both scores by 0.06 to
 0.10. Pass `--uniform-targets` to reproduce that pool.
 
-Unseen target products cost 0.004; unfamiliar wording costs a further 0.049.
+Unseen target products cost 0.004; unfamiliar wording costs a further 0.029.
 
 The unseen-target score varies with the draw of products. Seed `20260830` above was
 used for every development decision, so two seeds never used for any choice were run
@@ -190,10 +190,12 @@ zero model tokens and has no API cost or network dependency. Dense retrieval and
 LLM reranking are intentionally deferred until an offline experiment demonstrates
 a reproducible gain that justifies their latency, memory, and cost.
 
-Measured runtime cost, from [`results/004_runtime_v1.json`](results/004_runtime_v1.json):
-a 20-25 second one-time cold start to build the indexes, about 301 MB resident memory,
-and 26-64 ms median per-response latency (p95 73-204 ms) across three runs. Reproduce
-with:
+Measured runtime cost from [`results/013_runtime_cold_index_cache.json`](results/013_runtime_cold_index_cache.json)
+and [`results/014_runtime_warm_index_cache.json`](results/014_runtime_warm_index_cache.json)
+on the development machine (Python 3.13.5): a 11.7 s one-time cold build, then a
+0.34 s warm start from the derived `data/catalog.jsonl.index.db` snapshot, ~289-302 MB
+agent resident memory, and 19-30 ms p50 / 57-85 ms p95 per-response latency. The cache
+regenerates automatically when the catalog file changes. Reproduce with:
 
 ```bash
 python3 -X utf8 -m scripts.benchmark_runtime --output results/NNN_slug.json

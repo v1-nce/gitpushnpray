@@ -245,15 +245,95 @@ class SessionState:
 class Agent:
     """Deterministic, stateful constraint-satisfaction agent with a lexicographic ranker."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        index_path: str | Path | None = None,
+    ) -> None:
         self.catalog_path = Path(catalog_path)
+        if index_path is None:
+            index_path = self.catalog_path.with_name(self.catalog_path.name + ".index.db")
+        self.index_path = Path(index_path)
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._quality: dict[str, float] = {}
         self._searchable: dict[str, str] = {}
         self._token_cache: dict[str, frozenset[str]] = {}
         self._exact_cache: dict[tuple[str, str | None], frozenset[str]] = {}
-        self._build_index()
+        self._load_or_build_index()
+
+    def _catalog_fingerprint(self) -> str:
+        stat = self.catalog_path.stat()
+        return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+    def _index_is_fresh(self) -> bool:
+        if not self.index_path.exists():
+            return False
+        try:
+            source = sqlite3.connect(self.index_path)
+            try:
+                row = source.execute(
+                    "SELECT value FROM meta WHERE key = 'catalog_fp'"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return False
+            finally:
+                source.close()
+            return row is not None and row[0] == self._catalog_fingerprint()
+        except sqlite3.Error:
+            return False
+
+    def _restore_index(self) -> None:
+        source = sqlite3.connect(self.index_path)
+        try:
+            source.backup(self.connection)
+        finally:
+            source.close()
+
+    def _persist_index(self) -> None:
+        """Snapshot the freshly built in-memory index to disk for warm starts."""
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        self.connection.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('catalog_fp', ?)",
+            (self._catalog_fingerprint(),),
+        )
+        self.connection.commit()
+        temporary = self.index_path.with_name(self.index_path.name + ".tmp")
+        if temporary.exists():
+            temporary.unlink()
+        destination = sqlite3.connect(temporary)
+        try:
+            self.connection.backup(destination)
+        finally:
+            destination.close()
+        temporary.replace(self.index_path)
+
+    def _load_runtime_dicts(self) -> None:
+        self._quality = {
+            str(row[0]): float(row[1])
+            for row in self.connection.execute(
+                "SELECT parent_asin, quality FROM category_members"
+            )
+        }
+        self._searchable = {
+            str(row[0]): " ".join(part for part in row[1:] if part)
+            for row in self.connection.execute(
+                "SELECT parent_asin, title, features, details, description, "
+                "categories, store FROM products"
+            )
+        }
+
+    def _load_or_build_index(self) -> None:
+        if self._index_is_fresh():
+            self._restore_index()
+            self._load_runtime_dicts()
+        else:
+            # Builds into the in-memory connection and populates _quality and
+            # _searchable directly; the snapshot is a derived, reproducible cache.
+            self._build_index()
+            self._persist_index()
 
     def _build_index(self) -> None:
         cursor = self.connection.cursor()
@@ -858,6 +938,7 @@ class Agent:
         coverage: dict[str, tuple[int, int, int]],
         top_k: int,
         state: SessionState,
+        pending_question: bool,
     ) -> list[str]:
         if not ranked:
             return []
@@ -867,6 +948,11 @@ class Agent:
         if total_constraints == 0:
             # Browsing: clarify first, do not pad a wide, unconstrained tier.
             return []
+        if not pending_question:
+            # No productive clarification remains: emit the best ten by the full
+            # ranking rather than only the top coverage tier. A paraphrased
+            # target that fell to a lower tier can then still reach Top-10.
+            return ranked[:top_k]
         if total_constraints < 2 and len(tier) > top_k:
             # Thin evidence over a wide tier: emit what we endorse, not 10 fillers.
             return tier[:SHORT_LIST_MAX]
@@ -884,8 +970,14 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._parse_message(state, user_message)
         ranked, coverage = self._rank(state, user_message)
-        recommendations = self._emit(ranked, coverage, min(max(top_k, 0), 10), state)
         ask_attribute = self._select_question(state, turn)
+        recommendations = self._emit(
+            ranked,
+            coverage,
+            min(max(top_k, 0), 10),
+            state,
+            pending_question=ask_attribute is not None,
+        )
         if ask_attribute:
             state.question_counts[ask_attribute] += 1
             message = QUESTION_TEXT[ask_attribute]
